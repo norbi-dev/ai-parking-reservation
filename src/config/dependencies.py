@@ -1,10 +1,11 @@
 """Dependency injection using simple factory functions with caching.
 
 All dependencies are cached automatically using @lru_cache.
-No need for complex container classes!
+When USE_POSTGRES=true, PostgreSQL repositories are used; otherwise in-memory.
 """
 
 from functools import lru_cache
+from typing import Any
 
 from src.adapters.outgoing.persistence.in_memory import (
     InMemoryParkingSpaceRepository,
@@ -12,6 +13,12 @@ from src.adapters.outgoing.persistence.in_memory import (
     InMemoryUserRepository,
 )
 from src.config.settings import Settings
+from src.core.domain.models import ParkingSpace
+from src.core.ports.outgoing.repositories import (
+    ParkingSpaceRepository,
+    ReservationRepository,
+    UserRepository,
+)
 from src.core.usecases.admin_approval import AdminApprovalService
 from src.core.usecases.check_availability import CheckAvailabilityService
 from src.core.usecases.manage_parking_spaces import ManageParkingSpacesService
@@ -30,34 +37,88 @@ def get_settings() -> Settings:
 
 
 @lru_cache
-def get_reservation_repository() -> InMemoryReservationRepository:
+def _get_db_session() -> Any:
+    """Get a SQLModel database session (cached).
+
+    Returns:
+        SQLModel Session connected to PostgreSQL
+    """
+    from sqlmodel import Session
+
+    from src.adapters.outgoing.persistence.database import (
+        create_db_engine,
+        create_tables,
+    )
+
+    settings = get_settings()
+    create_tables(settings.database_url)
+    engine = create_db_engine(settings.database_url)
+    return Session(engine)
+
+
+@lru_cache
+def get_reservation_repository() -> ReservationRepository:
     """Get reservation repository (cached).
+
+    Uses PostgreSQL when USE_POSTGRES=true, otherwise in-memory.
 
     Returns:
         Reservation repository instance
     """
+    settings = get_settings()
+    if settings.use_postgres:
+        from src.adapters.outgoing.persistence.postgres import (
+            PostgresReservationRepository,
+        )
+
+        return PostgresReservationRepository(session=_get_db_session())
+
     return InMemoryReservationRepository()
 
 
 @lru_cache
-def get_parking_space_repository() -> InMemoryParkingSpaceRepository:
+def get_parking_space_repository() -> ParkingSpaceRepository:
     """Get parking space repository (cached).
+
+    Uses PostgreSQL when USE_POSTGRES=true, otherwise in-memory with seed data.
 
     Returns:
         Parking space repository instance
     """
-    repo = InMemoryParkingSpaceRepository()
-    _seed_parking_spaces(repo)
-    return repo
+    settings = get_settings()
+    if settings.use_postgres:
+        from src.adapters.outgoing.persistence.postgres import (
+            PostgresParkingSpaceRepository,
+        )
+
+        repo: ParkingSpaceRepository = PostgresParkingSpaceRepository(
+            session=_get_db_session()
+        )
+        _seed_parking_spaces(repo)
+        return repo
+
+    in_memory_repo = InMemoryParkingSpaceRepository()
+    _seed_parking_spaces(in_memory_repo)
+    return in_memory_repo
 
 
 @lru_cache
-def get_user_repository() -> InMemoryUserRepository:
+def get_user_repository() -> UserRepository:
     """Get user repository (cached).
+
+    Uses PostgreSQL when USE_POSTGRES=true, otherwise in-memory.
 
     Returns:
         User repository instance
     """
+    settings = get_settings()
+    if settings.use_postgres:
+        from src.adapters.outgoing.persistence.postgres import (
+            PostgresUserRepository,
+        )
+
+        return PostgresUserRepository(session=_get_db_session())
+
     return InMemoryUserRepository()
 
 
@@ -118,13 +179,17 @@ def get_manage_parking_spaces_usecase() -> ManageParkingSpacesService:
     )
 
 
-def _seed_parking_spaces(repo: InMemoryParkingSpaceRepository) -> None:
+def _seed_parking_spaces(repo: ParkingSpaceRepository) -> None:
     """Seed the parking space repository with sample data.
+
+    Checks if data already exists to avoid duplicates (important for PostgreSQL).
 
     Args:
         repo: Parking space repository to seed
     """
-    from src.core.domain.models import ParkingSpace
+    # Skip seeding if spaces already exist
+    if repo.find_all():
+        return
 
     sample_spaces = [
         ParkingSpace(

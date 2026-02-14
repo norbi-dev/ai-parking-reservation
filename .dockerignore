@@ -1,0 +1,42 @@
+# Version control
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+wheels/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing & tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tests/
+
+# Docker
+docker-compose.yml
+Dockerfile.*
+.dockerignore
+
+# Docs & meta
+*.md
+LICENSE
+docs/
+
+# Environment (secrets should come from compose/env, not baked into image)
+.env
+.env.*
+!.env.example

@@ -1,0 +1,47 @@
+# =============================================================================
+# Dockerfile.api - FastAPI REST API service
+# =============================================================================
+# Multi-stage build: install deps in builder, copy only runtime to final image
+# =============================================================================
+
+# --------------- builder stage ---------------
+FROM python:3.13-slim AS builder
+
+# Install uv for fast, reproducible dependency resolution
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+# Copy dependency files first (layer caching)
+COPY pyproject.toml uv.lock ./
+
+# Install production dependencies only (no dev group)
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy application source
+COPY src/ src/
+COPY main_api.py ./
+
+# Install the project itself
+RUN uv sync --frozen --no-dev
+
+# --------------- runtime stage ---------------
+FROM python:3.13-slim AS runtime
+
+WORKDIR /app
+
+# Copy the virtual environment from builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application source
+COPY --from=builder /app/src src/
+COPY --from=builder /app/main_api.py ./
+
+# Put the venv on PATH so `python` resolves to the venv's interpreter
+ENV PATH="/app/.venv/bin:$PATH"
+
+# FastAPI default port
+EXPOSE 8000
+
+# Run uvicorn directly (no reload in production)
+CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,4 +1,7 @@
 services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + pgvector database
+  # ---------------------------------------------------------------------------
   postgres:
     image: docker.io/pgvector/pgvector:pg17
     container_name: parking-reservation-db
@@ -15,6 +18,68 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - parking-net
+
+  # ---------------------------------------------------------------------------
+  # FastAPI REST API
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: parking-reservation-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://parkinguser:parkingpass@postgres:5432/parkingreservation
+      USE_POSTGRES: "true"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+      ADMIN_APPROVAL_REQUIRED: "true"
+      MAX_RESERVATION_DAYS: "30"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/admin/spaces')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - parking-net
+
+  # ---------------------------------------------------------------------------
+  # Streamlit UI
+  # ---------------------------------------------------------------------------
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: parking-reservation-ui
+    ports:
+      - "8501:8501"
+    environment:
+      DATABASE_URL: postgresql://parkinguser:parkingpass@postgres:5432/parkingreservation
+      USE_POSTGRES: "true"
+      ADMIN_APPROVAL_REQUIRED: "true"
+      MAX_RESERVATION_DAYS: "30"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - parking-net
 
 volumes:
   postgres_data:
+
+networks:
+  parking-net:
+    driver: bridge

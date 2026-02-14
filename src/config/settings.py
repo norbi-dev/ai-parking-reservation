@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         ollama_model: Model name for local Ollama
         ollama_base_url: Base URL for Ollama API
         database_url: PostgreSQL connection string
+        use_postgres: Use PostgreSQL repos (true) or in-memory (false)
         openai_api_key: API key for OpenAI embeddings
         max_reservation_days: Maximum days in advance for reservations
         admin_approval_required: Enable human-in-the-loop approval
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql://parkinguser:parkingpass@localhost:5432/parkingreservation"
     )
+    use_postgres: bool = False
     openai_api_key: str = ""
     max_reservation_days: int = 30
     admin_approval_required: bool = True

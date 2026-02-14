@@ -1,7 +1,46 @@
 [project]
 name = "ai-parking-reservation"
 version = "0.1.0"
-description = "Add your description here"
+description = "Parking reservation chatbot with LLM-powered conversational interface"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "streamlit>=1.40.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "sqlmodel>=0.0.22",
+    "psycopg2-binary>=2.9.10",
+    "pydantic-ai>=0.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "mypy>=1.13.0",
+    "ruff>=0.8.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: Unit tests (no external dependencies)",
+    "integration: Integration tests (requires external services)",
+]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]

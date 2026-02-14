@@ -25,8 +25,8 @@ For static data like general information, parking details location use PGVector 
 
 The architecture of the parking reservation chatbot consists of the following components:
 
-- **Frontend**: Built using Streamlit, the frontend provides a user-friendly interface for both clients and administrators to interact with the chatbot.
-- **Backend**: The backend is responsible for handling business logic, processing user requests, and interacting with the databases. It is built using Python and includes the chatbot logic and database interactions.
+- **Frontend**: Built using Streamlit, the frontend provides a user-friendly interface for both clients and administrators to interact with the chatbot. Desined to be replacabe with a React or Vue frontend in the future if needed.
+- **Backend**: The backend is responsible for handling business logic, processing user requests, and interacting with the databases. It is built using Python and includes the chatbot logic and database interactions. It is using Pydantic AI mounted to FastAPI and streaming repsonses.
 - **Databases**: The PostgreSQL database is used for dynamic data storage, while the PGVector database is used for static data storage.
 
 ## Archihetture Pattern

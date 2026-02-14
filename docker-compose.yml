@@ -1,18 +1,17 @@
 services:
   postgres:
     image: docker.io/pgvector/pgvector:pg17
-    container_name: article-summarizer-db
+    container_name: parking-reservation-db
     environment:
-      POSTGRES_USER: articleuser
-      POSTGRES_PASSWORD: articlepass
-      POSTGRES_DB: articlesummarizer
+      POSTGRES_USER: parkinguser
+      POSTGRES_PASSWORD: parkingpass
+      POSTGRES_DB: parkingreservation
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U articleuser -d articlesummarizer"]
+      test: ["CMD-SHELL", "pg_isready -U parkinguser -d parkingreservation"]
       interval: 5s
       timeout: 5s
       retries: 5

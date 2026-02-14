@@ -1,6 +1,5 @@
-def main():
-    print("Hello from ai-parking-reservation!")
+"""Main entry point for the Streamlit parking reservation UI."""
 
+from src.adapters.incoming.streamlit_app.app import run_app
 
-if __name__ == "__main__":
-    main()
+run_app()

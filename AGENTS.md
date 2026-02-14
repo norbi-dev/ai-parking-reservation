@@ -12,7 +12,7 @@ Essential information for AI coding agents working in this repository.
 
 - **Architecture**: Hexagonal/Clean Architecture with DDD principles
 - **Language**: Python 3.14
-- **Stack**: LangGraph, Streamlit, FastAPI, PostgreSQL, pgvector
+- **Stack**: Pydantic AI, Pydantic Graph for Graph based worklow, Streamlit, FastAPI, SQLModel, PostgreSQL, pgvector
 - **Package Manager**: `uv`
 
 ## Quick Commands

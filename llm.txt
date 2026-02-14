@@ -310,4 +310,4 @@ These are stale references or removed items — do NOT import or recreate:
 | `ErrorResponse` in `schemas.py` | **Removed** | Was defined but never used by any endpoint. |
 | `get_session()` in `database.py` | **Removed** | Dead code. DI uses `_get_db_session()` in `dependencies.py`. |
 | `docs/` directory | **Never existed** | Referenced in `AGENTS.md` but never created. |
-| `.opencode/skills/fix-pre-commit/` | **Not yet created** | Referenced in `AGENTS.md` but skill file doesn't exist yet. |
+| `.opencode/skills/fix-pre-commit/` | **Replaced** | Renamed to `fix-lint`. Use `skill({ name: "fix-lint" })` instead. |

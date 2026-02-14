@@ -5,16 +5,16 @@ Essential information for AI coding agents working in this repository.
 > **📖 Project Context:** See `llm.txt` in the project root for a comprehensive reference of all models, APIs, architecture, and file structure.
 >
 > **💡 Agent Skills Available:** Check `.opencode/skills/` for step-by-step procedures for common tasks.
-> - **fix-pre-commit** - Fix code quality issues before committing (run after implementations)
+> - **fix-lint** - Fix linting, formatting, and unused imports (run after implementations)
 > - **update-llm-txt** - Update `llm.txt` after implementing changes (run after any structural/API/model changes)
-> - Load skills using: `skill({ name: "fix-pre-commit" })` or `skill({ name: "update-llm-txt" })`
+> - Load skills using: `skill({ name: "fix-lint" })` or `skill({ name: "update-llm-txt" })`
 
 ## Project Overview
 
 **Parking Reservation Chatbot** - Python app using Hexagonal Architecture (Ports & Adapters) for conversational parking space reservations with LLM-powered chatbot, human-in-the-loop approval, and vector-based static data retrieval.
 
 - **Architecture**: Hexagonal/Clean Architecture with DDD principles
-- **Language**: Python 3.14
+- **Language**: Python 3.13
 - **Stack**: Pydantic AI, Pydantic Graph for Graph based worklow, Streamlit, FastAPI, SQLModel, PostgreSQL, pgvector
 - **Package Manager**: `uv`
 
@@ -39,8 +39,8 @@ uv run pytest -v -m "not integration"    # Skip integration tests (CI)
 
 ### Linting
 ```bash
+ruff check --fix . && ruff format .        # Lint + format (or load fix-lint skill)
 mypy src/                                 # Type checking
-ruff check --fix .                        # Linting/formatting
 ```
 
 ## Architecture Structure
@@ -124,7 +124,7 @@ class ReservationResponse(BaseModel):
 ### Error Handling
 ```python
 # Custom exceptions in src/core/domain/exceptions.py
-class SpaceNotAvailableError(DomainException):
+class SpaceNotAvailableError(DomainError):
     """Raised when parking space is not available."""
 
 # Raise with clear messages
@@ -194,7 +194,7 @@ LOCAL_MODE=false                        # true=Ollama, false=OpenRouter
 OPENROUTER_API_KEY=sk-...              # Remote mode
 MODEL_NAME=google/gemini-flash-1.5
 OLLAMA_MODEL=llama3.2                  # Local mode
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_BASE_URL=http://localhost:11434/v1
 DATABASE_URL=postgresql://...          # PostgreSQL for dynamic data
 OPENAI_API_KEY=sk-...                  # Optional, for embeddings (pgvector)
 MAX_RESERVATION_DAYS=30                # Maximum days in advance
@@ -231,12 +231,5 @@ All dependencies are cached automatically using `@lru_cache`. No need for comple
 - **Unit tests use mocks** - Mark integration tests with `@pytest.mark.integration`
 - **DI over globals** - Constructor injection via container
 - **Protocols over ABC** - Structural subtyping preferred
-- **Run fix-pre-commit skill** - Always run `skill({ name: "fix-pre-commit" })` after implementation tasks
+- **Run fix-lint skill** - Always run `skill({ name: "fix-lint" })` after implementation tasks
 
-## Documentation
-
-All project documentation is organized in the `docs/` directory:
-- `docs/architecture/` - System architecture and design
-- `docs/development/` - Development guidelines and tools
-- `docs/guides/` - User and developer guides
-- See `docs/README.md` for full documentation index

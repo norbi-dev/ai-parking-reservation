@@ -69,6 +69,145 @@ graph TD
     Chatbot -->|Notifies user of confirmation| User
 ```
 
+## Getting Started
+
+### Prerequisites
+
+- **Docker** or **Podman** with compose support
+- **Ollama** (optional, for local LLM) - Install from [ollama.ai](https://ollama.ai)
+
+### Running with Docker Compose
+
+The easiest way to run the entire application stack locally is using Docker Compose or Podman Compose.
+
+#### 1. Clone the repository
+
+```bash
+git clone <repository-url>
+cd ai-parking-reservation
+```
+
+#### 2. Set up environment variables (optional)
+
+The application works out of the box with default settings. If you want to customize:
+
+```bash
+cp .env.example .env
+# Edit .env with your preferred settings
+```
+
+#### 3. Start the services
+
+**Using Docker Compose:**
+```bash
+docker-compose up -d
+```
+
+**Using Podman Compose:**
+```bash
+podman-compose up -d
+```
+
+This will start three services:
+- **PostgreSQL + pgvector** (port 5432) - Database for dynamic and static data
+- **FastAPI REST API** (port 8000) - Backend API
+- **Streamlit UI** (port 8501) - Web interface
+
+#### 4. Set up Ollama (for local LLM)
+
+If using local mode (default), you need Ollama running on your host machine:
+
+```bash
+# Install Ollama from https://ollama.ai, then pull the model
+ollama pull llama3.2
+
+# Or use a different model (update OLLAMA_MODEL in docker-compose.yml)
+ollama pull gpt-oss:20b
+```
+
+**Note:** The containers use `host.containers.internal` to access Ollama on your host machine.
+
+#### 5. Access the application
+
+- **Client Interface**: http://localhost:8501
+- **Admin Interface**: http://localhost:8501 (select Admin from sidebar)
+- **REST API**: http://localhost:8000
+- **API Documentation**: http://localhost:8000/docs
+
+#### 6. Managing the services
+
+```bash
+# View logs
+docker-compose logs -f
+# or
+podman-compose logs -f
+
+# Stop services
+docker-compose down
+# or
+podman-compose down
+
+# Stop and remove data
+docker-compose down -v  # WARNING: This deletes the database
+# or
+podman-compose down -v
+```
+
+### Alternative: Running Locally (Development)
+
+For development without Docker:
+
+#### 1. Install dependencies
+
+```bash
+# Install uv package manager
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install dependencies
+uv sync
+```
+
+#### 2. Start PostgreSQL
+
+```bash
+podman-compose up -d postgres
+# or
+docker-compose up -d postgres
+```
+
+#### 3. Set up environment
+
+```bash
+cp .env.example .env
+# Edit .env:
+# - Set USE_POSTGRES=true
+# - Configure DATABASE_URL if needed
+```
+
+#### 4. Run the application
+
+```bash
+# Run Streamlit UI
+uv run streamlit run main.py
+
+# Or run REST API
+uv run python main_api.py
+```
+
+### Configuration Options
+
+Key environment variables (see `.env.example` for full list):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOCAL_MODE` | `true` | Use Ollama (true) or OpenRouter (false) |
+| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint |
+| `DATABASE_URL` | `postgresql://...` | PostgreSQL connection string |
+| `USE_POSTGRES` | `false` | Use PostgreSQL (true) or in-memory (false) |
+| `ADMIN_APPROVAL_REQUIRED` | `true` | Enable human-in-the-loop approval |
+| `MAX_RESERVATION_DAYS` | `30` | Maximum days in advance for reservations |
+
 ## Reservation Process Flow
 
 Logical flow showing how administrator approval influences reservation status:

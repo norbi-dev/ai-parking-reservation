@@ -2,16 +2,31 @@
 
 This adapter wraps the existing use cases as LLM tools, allowing users to
 interact with the parking system through natural language conversation.
+
+Tools return JSON strings with a '__widget__' type marker so the Streamlit
+UI can detect and render interactive widgets (tables, cards, buttons) inline
+in the chat conversation.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from uuid import UUID
 
 from pydantic_ai import Agent, RunContext
 
+from src.adapters.incoming.streamlit_app.chat_widgets import (
+    AllSpacesResponse,
+    AvailabilityResponse,
+    MyReservationsResponse,
+    PendingReservationsResponse,
+    ReservationActionResponse,
+    ReservationCreatedResponse,
+    ReservationInfo,
+    SpaceActionResponse,
+    SpaceInfo,
+)
 from src.core.domain.exceptions import DomainError
 from src.core.domain.models import ParkingSpace, Reservation, TimeSlot, UserRole
 from src.core.usecases.admin_approval import AdminApprovalService
@@ -22,31 +37,36 @@ from src.core.usecases.reserve_parking import ReserveParkingService
 
 SYSTEM_PROMPT = """\
 You are a helpful parking reservation assistant. You help users manage parking \
-space reservations through natural conversation.
+space reservations through a chat-based interface.
 
-**Your capabilities:**
+**Available actions for clients:**
 - Check available parking spaces for a given time period
-- Make reservations for users
-- Show a user's existing reservations
+- Make reservations for parking spaces
+- View your existing reservations
 - Cancel reservations
 - List all parking spaces with details
 
-**For admin users, you can also:**
+**Available actions for admin users:**
+- All client actions above
 - View pending reservations that need approval
-- Approve or reject pending reservations
+- Approve or reject pending reservations with optional notes
 - Add or remove parking spaces
 
 **Important rules:**
 - Always confirm details before making a reservation
 - When showing times, use a clear human-readable format
-- When showing reservations, include the reservation ID, space, time, and status
 - If the user provides relative times like "tomorrow at 2pm", calculate the \
-actual datetime
+actual datetime based on the current time provided in your context
 - Be concise but friendly
 - When users ask to reserve a space, first check availability, then make the \
 reservation
 - Format currency values with $ and 2 decimal places
 - The current date and time is provided in each request context
+- When the user greets you or asks what you can do, briefly list the available \
+actions relevant to their role
+- Tools return structured data that the UI will render as interactive widgets. \
+After calling a tool, provide a brief natural-language summary of what happened \
+alongside the tool result. Do not repeat the raw data from the tool response.
 """
 
 
@@ -73,43 +93,29 @@ class ChatDeps:
     manage_spaces: ManageParkingSpacesService
 
 
-def _format_space(space: ParkingSpace) -> str:
-    """Format a parking space for display.
-
-    Args:
-        space: Parking space to format
-
-    Returns:
-        Human-readable string representation
-    """
-    status = "Available" if space.is_available else "Unavailable"
-    return (
-        f"Space {space.space_id}: {space.location} | "
-        f"${space.hourly_rate:.2f}/hr | "
-        f"Type: {space.space_type} | {status}"
+def _space_to_info(space: ParkingSpace) -> SpaceInfo:
+    """Convert a domain ParkingSpace to a serialisable SpaceInfo."""
+    return SpaceInfo(
+        space_id=space.space_id,
+        location=space.location,
+        hourly_rate=space.hourly_rate,
+        space_type=space.space_type,
+        is_available=space.is_available,
     )
 
 
-def _format_reservation(reservation: Reservation) -> str:
-    """Format a reservation for display.
-
-    Args:
-        reservation: Reservation to format
-
-    Returns:
-        Human-readable string representation
-    """
-    lines = [
-        f"Reservation ID: {reservation.reservation_id}",
-        f"Space: {reservation.space_id}",
-        f"From: {reservation.time_slot.start_time.strftime('%Y-%m-%d %H:%M')}",
-        f"To: {reservation.time_slot.end_time.strftime('%Y-%m-%d %H:%M')}",
-        f"Status: {reservation.status.value}",
-        f"Created: {reservation.created_at.strftime('%Y-%m-%d %H:%M')}",
-    ]
-    if reservation.admin_notes:
-        lines.append(f"Admin Notes: {reservation.admin_notes}")
-    return "\n".join(lines)
+def _reservation_to_info(reservation: Reservation) -> ReservationInfo:
+    """Convert a domain Reservation to a serialisable ReservationInfo."""
+    return ReservationInfo(
+        reservation_id=str(reservation.reservation_id),
+        space_id=reservation.space_id,
+        start_time=reservation.time_slot.start_time.strftime("%Y-%m-%d %H:%M"),
+        end_time=reservation.time_slot.end_time.strftime("%Y-%m-%d %H:%M"),
+        status=reservation.status.value,
+        created_at=reservation.created_at.strftime("%Y-%m-%d %H:%M"),
+        admin_notes=reservation.admin_notes,
+        user_id=str(reservation.user_id),
+    )
 
 
 def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
@@ -165,7 +171,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             end_time: End datetime in ISO format (YYYY-MM-DDTHH:MM)
 
         Returns:
-            Formatted list of available spaces or a message if none available
+            JSON widget response with available spaces
         """
         try:
             start_dt = datetime.fromisoformat(start_time)
@@ -180,13 +186,16 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             return f"Error checking availability: {e}"
 
         if not spaces:
-            return "No parking spaces are available for the requested time period."
+            msg = "No parking spaces available for the requested time."
+            return AvailabilityResponse(
+                message=msg,
+                spaces=[],
+            ).to_json()
 
-        lines = [f"Found {len(spaces)} available space(s):"]
-        lines.append("")
-        for space in spaces:
-            lines.append(_format_space(space))
-        return "\n".join(lines)
+        return AvailabilityResponse(
+            message=f"Found {len(spaces)} available space(s):",
+            spaces=[asdict(_space_to_info(s)) for s in spaces],
+        ).to_json()
 
     @agent.tool
     def reserve_space(
@@ -204,7 +213,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             end_time: End datetime in ISO format (YYYY-MM-DDTHH:MM)
 
         Returns:
-            Confirmation message with reservation details or error message
+            JSON widget response with reservation details
         """
         try:
             start_dt = datetime.fromisoformat(start_time)
@@ -222,10 +231,10 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         except DomainError as e:
             return f"Could not create reservation: {e}"
 
-        return (
-            "Reservation created successfully! Awaiting admin approval.\n\n"
-            + _format_reservation(reservation)
-        )
+        return ReservationCreatedResponse(
+            message="Reservation created successfully! Awaiting admin approval.",
+            reservation=asdict(_reservation_to_info(reservation)),
+        ).to_json()
 
     @agent.tool
     def get_my_reservations(ctx: RunContext[ChatDeps]) -> str:
@@ -235,20 +244,21 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             ctx: Run context with dependencies
 
         Returns:
-            Formatted list of user's reservations or message if none exist
+            JSON widget response with user's reservations
         """
         reservations = ctx.deps.manage_reservations.get_user_reservations(
             ctx.deps.user_id
         )
         if not reservations:
-            return "You have no reservations."
+            return MyReservationsResponse(
+                message="You have no reservations.",
+                reservations=[],
+            ).to_json()
 
-        lines = [f"You have {len(reservations)} reservation(s):"]
-        lines.append("")
-        for res in reservations:
-            lines.append(_format_reservation(res))
-            lines.append("---")
-        return "\n".join(lines)
+        return MyReservationsResponse(
+            message=f"You have {len(reservations)} reservation(s):",
+            reservations=[asdict(_reservation_to_info(r)) for r in reservations],
+        ).to_json()
 
     @agent.tool
     def cancel_reservation(
@@ -262,7 +272,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             reservation_id: The UUID of the reservation to cancel
 
         Returns:
-            Confirmation or error message
+            JSON widget response with cancelled reservation details
         """
         try:
             res_uuid = UUID(reservation_id)
@@ -276,9 +286,10 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         except DomainError as e:
             return f"Could not cancel reservation: {e}"
 
-        return (
-            f"Reservation cancelled successfully.\n\n{_format_reservation(reservation)}"
-        )
+        return ReservationActionResponse(
+            message="Reservation cancelled successfully.",
+            reservation=asdict(_reservation_to_info(reservation)),
+        ).to_json()
 
     @agent.tool
     def list_all_spaces(ctx: RunContext[ChatDeps]) -> str:
@@ -288,17 +299,19 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             ctx: Run context with dependencies
 
         Returns:
-            Formatted list of all parking spaces
+            JSON widget response with all parking spaces
         """
         spaces = ctx.deps.manage_spaces.get_all_spaces()
         if not spaces:
-            return "No parking spaces are configured in the system."
+            return AllSpacesResponse(
+                message="No parking spaces are configured in the system.",
+                spaces=[],
+            ).to_json()
 
-        lines = [f"Total parking spaces: {len(spaces)}"]
-        lines.append("")
-        for space in spaces:
-            lines.append(_format_space(space))
-        return "\n".join(lines)
+        return AllSpacesResponse(
+            message=f"Total parking spaces: {len(spaces)}",
+            spaces=[asdict(_space_to_info(s)) for s in spaces],
+        ).to_json()
 
     # --- Admin-Only Tools ---
 
@@ -310,21 +323,22 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             ctx: Run context with dependencies
 
         Returns:
-            Formatted list of pending reservations or access denied message
+            JSON widget response with pending reservations
         """
         if ctx.deps.user_role != UserRole.ADMIN:
             return "Access denied. Only administrators can view pending reservations."
 
         pending = ctx.deps.admin_approval.get_pending_reservations()
         if not pending:
-            return "No reservations pending approval."
+            return PendingReservationsResponse(
+                message="No reservations pending approval.",
+                reservations=[],
+            ).to_json()
 
-        lines = [f"Pending reservations: {len(pending)}"]
-        lines.append("")
-        for res in pending:
-            lines.append(_format_reservation(res))
-            lines.append("---")
-        return "\n".join(lines)
+        return PendingReservationsResponse(
+            message=f"Pending reservations: {len(pending)}",
+            reservations=[asdict(_reservation_to_info(r)) for r in pending],
+        ).to_json()
 
     @agent.tool
     def approve_reservation(
@@ -340,7 +354,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             admin_notes: Optional notes from the administrator
 
         Returns:
-            Confirmation or error message
+            JSON widget response with approved reservation details
         """
         if ctx.deps.user_role != UserRole.ADMIN:
             return "Access denied. Only administrators can approve reservations."
@@ -357,9 +371,10 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         except DomainError as e:
             return f"Could not approve reservation: {e}"
 
-        return "Reservation approved successfully!\n\n" + _format_reservation(
-            reservation
-        )
+        return ReservationActionResponse(
+            message="Reservation approved successfully!",
+            reservation=asdict(_reservation_to_info(reservation)),
+        ).to_json()
 
     @agent.tool
     def reject_reservation(
@@ -375,7 +390,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             admin_notes: Optional notes from the administrator
 
         Returns:
-            Confirmation or error message
+            JSON widget response with rejected reservation details
         """
         if ctx.deps.user_role != UserRole.ADMIN:
             return "Access denied. Only administrators can reject reservations."
@@ -392,7 +407,10 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         except DomainError as e:
             return f"Could not reject reservation: {e}"
 
-        return "Reservation rejected.\n\n" + _format_reservation(reservation)
+        return ReservationActionResponse(
+            message="Reservation rejected.",
+            reservation=asdict(_reservation_to_info(reservation)),
+        ).to_json()
 
     @agent.tool
     def add_parking_space(
@@ -412,7 +430,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             space_type: Type of space (standard, electric, handicap)
 
         Returns:
-            Confirmation or error message
+            JSON widget response with the added space details
         """
         if ctx.deps.user_role != UserRole.ADMIN:
             return "Access denied. Only administrators can add parking spaces."
@@ -428,7 +446,10 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         except DomainError as e:
             return f"Could not add parking space: {e}"
 
-        return f"Parking space added successfully!\n\n{_format_space(created)}"
+        return SpaceActionResponse(
+            message="Parking space added successfully!",
+            space=asdict(_space_to_info(created)),
+        ).to_json()
 
     @agent.tool
     def remove_parking_space(
@@ -452,6 +473,8 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         except DomainError as e:
             return f"Could not remove parking space: {e}"
 
-        return f"Parking space {space_id} removed successfully."
+        return SpaceActionResponse(
+            message=f"Parking space {space_id} removed successfully.",
+        ).to_json()
 
     return agent

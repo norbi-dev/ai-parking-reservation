@@ -1,8 +1,9 @@
 """Streamlit chat UI adapter for the parking reservation chatbot.
 
 This is the main entry point for the Streamlit application. It provides
-a chat-based interface with sidebar controls for role switching and
-admin operations.
+a fully chat-driven interface where users interact with an AI assistant
+to manage parking reservations. Both client and admin operations are
+handled through the chat with inline interactive widgets.
 """
 
 import asyncio
@@ -10,7 +11,6 @@ from uuid import uuid4
 
 import streamlit as st
 
-from src.adapters.incoming.streamlit_app.admin_page import render_admin_sidebar
 from src.adapters.incoming.streamlit_app.chat_page import render_chat
 
 
@@ -24,10 +24,12 @@ def _init_session_state() -> None:
         st.session_state.messages = []
     if "event_loop" not in st.session_state:
         st.session_state.event_loop = asyncio.new_event_loop()
+    if "pending_prompt" not in st.session_state:
+        st.session_state.pending_prompt = None
 
 
 def _render_sidebar() -> None:
-    """Render the sidebar with role switcher and user info."""
+    """Render the sidebar with role switcher and session info."""
     with st.sidebar:
         st.header("Settings")
 
@@ -41,6 +43,8 @@ def _render_sidebar() -> None:
         new_role = role.lower() if role else "client"
         if new_role != st.session_state.user_role:
             st.session_state.user_role = new_role
+            st.session_state.messages = []
+            st.session_state.pending_prompt = None
             st.rerun()
 
         st.divider()
@@ -59,12 +63,8 @@ def _render_sidebar() -> None:
         # Clear chat button
         if st.button("Clear Chat", use_container_width=True):
             st.session_state.messages = []
+            st.session_state.pending_prompt = None
             st.rerun()
-
-        # Admin-specific sidebar section
-        if st.session_state.user_role == "admin":
-            st.divider()
-            render_admin_sidebar()
 
 
 def run_app() -> None:

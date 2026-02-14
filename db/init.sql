@@ -1,6 +1,48 @@
 -- Database initialization script for the Parking Reservation System
 -- This script runs automatically on first PostgreSQL container start.
--- It seeds the database with sample data so developers can try the app immediately.
+-- It creates the tables and seeds the database with sample data so
+-- developers can try the app immediately.
+
+-- =============================================================================
+-- Enable pgvector extension (if needed in future for RAG / embeddings)
+-- =============================================================================
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- =============================================================================
+-- Tables
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS parking_spaces (
+    space_id   TEXT PRIMARY KEY,
+    location   TEXT    NOT NULL,
+    is_available BOOLEAN NOT NULL DEFAULT true,
+    hourly_rate  DOUBLE PRECISION NOT NULL DEFAULT 5.0,
+    space_type   TEXT    NOT NULL DEFAULT 'standard'
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    user_id   UUID PRIMARY KEY,
+    username  TEXT NOT NULL DEFAULT '',
+    email     TEXT NOT NULL DEFAULT '',
+    role      TEXT NOT NULL DEFAULT 'client',
+    full_name TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS ix_users_username ON users (username);
+
+CREATE TABLE IF NOT EXISTS reservations (
+    reservation_id UUID PRIMARY KEY,
+    user_id        UUID   NOT NULL,
+    space_id       TEXT   NOT NULL,
+    start_time     TIMESTAMP NOT NULL,
+    end_time       TIMESTAMP NOT NULL,
+    status         TEXT   NOT NULL DEFAULT 'pending',
+    created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    admin_notes    TEXT   NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS ix_reservations_user_id  ON reservations (user_id);
+CREATE INDEX IF NOT EXISTS ix_reservations_space_id ON reservations (space_id);
 
 -- =============================================================================
 -- Parking Spaces

@@ -4,8 +4,10 @@ All dependencies are cached automatically using @lru_cache.
 When USE_POSTGRES=true, PostgreSQL repositories are used; otherwise in-memory.
 """
 
+import os
 from functools import lru_cache
 from typing import Any
+from uuid import UUID
 
 from src.adapters.outgoing.persistence.in_memory import (
     InMemoryParkingSpaceRepository,
@@ -13,7 +15,7 @@ from src.adapters.outgoing.persistence.in_memory import (
     InMemoryUserRepository,
 )
 from src.config.settings import Settings
-from src.core.domain.models import ParkingSpace
+from src.core.domain.models import ParkingSpace, UserRole
 from src.core.ports.outgoing.repositories import (
     ParkingSpaceRepository,
     ReservationRepository,
@@ -256,3 +258,56 @@ def _seed_parking_spaces(repo: ParkingSpaceRepository) -> None:
 
     for space in sample_spaces:
         repo.save(space)
+
+
+def get_chatbot_model_name() -> str:
+    """Get the pydantic-ai model name string for the configured LLM.
+
+    For Ollama, sets the OLLAMA_BASE_URL env var (required by pydantic-ai)
+    and returns 'ollama:<model_name>'.
+
+    Returns:
+        Model name string for pydantic-ai Agent
+    """
+    settings = get_settings()
+    if settings.local_mode:
+        # pydantic-ai reads OLLAMA_BASE_URL from the environment
+        os.environ.setdefault("OLLAMA_BASE_URL", settings.ollama_base_url)
+        return f"ollama:{settings.ollama_model}"
+    return f"openrouter:{settings.model_name}"
+
+
+@lru_cache
+def get_parking_agent() -> Any:
+    """Get the parking chatbot agent (cached).
+
+    Returns:
+        Configured pydantic-ai Agent for parking reservations
+    """
+    from src.adapters.outgoing.llm.chatbot import create_parking_agent
+
+    model_name = get_chatbot_model_name()
+    return create_parking_agent(model_name)
+
+
+def get_chat_deps(user_id: UUID, user_role: UserRole) -> Any:
+    """Create ChatDeps for a specific user session.
+
+    Args:
+        user_id: Current user's UUID
+        user_role: Current user's role
+
+    Returns:
+        ChatDeps instance wired with all use cases
+    """
+    from src.adapters.outgoing.llm.chatbot import ChatDeps
+
+    return ChatDeps(
+        user_id=user_id,
+        user_role=user_role,
+        reserve_parking=get_reserve_parking_usecase(),
+        check_availability=get_check_availability_usecase(),
+        manage_reservations=get_manage_reservations_usecase(),
+        admin_approval=get_admin_approval_usecase(),
+        manage_spaces=get_manage_parking_spaces_usecase(),
+    )

@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     local_mode: bool = True
     openrouter_api_key: str = ""
     model_name: str = "google/gemini-flash-1.5"
-    ollama_model: str = "llama3.2"
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "gpt-oss:20b"
+    ollama_base_url: str = "http://localhost:11434/v1"
     database_url: str = (
         "postgresql://parkinguser:parkingpass@localhost:5432/parkingreservation"
     )

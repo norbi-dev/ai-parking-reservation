@@ -13,6 +13,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U parkinguser -d parkingreservation"]
       interval: 5s
@@ -38,6 +39,9 @@ services:
       API_PORT: "8000"
       ADMIN_APPROVAL_REQUIRED: "true"
       MAX_RESERVATION_DAYS: "30"
+      LOCAL_MODE: "true"
+      OLLAMA_MODEL: "gpt-oss:20b"
+      OLLAMA_BASE_URL: "http://host.containers.internal:11434/v1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,6 +69,9 @@ services:
       USE_POSTGRES: "true"
       ADMIN_APPROVAL_REQUIRED: "true"
       MAX_RESERVATION_DAYS: "30"
+      LOCAL_MODE: "true"
+      OLLAMA_MODEL: "gpt-oss:20b"
+      OLLAMA_BASE_URL: "http://host.containers.internal:11434/v1"
     depends_on:
       postgres:
         condition: service_healthy

@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, status
 from src.adapters.incoming.api.schemas import (
     AdminActionRequest,
     AvailabilityRequest,
+    ChatRequest,
+    ChatResponse,
     CreateReservationRequest,
     ParkingSpaceRequest,
     ParkingSpaceResponse,
@@ -21,7 +23,7 @@ from src.core.domain.exceptions import (
     SpaceNotAvailableError,
     SpaceNotFoundError,
 )
-from src.core.domain.models import ParkingSpace, Reservation, TimeSlot
+from src.core.domain.models import ParkingSpace, Reservation, TimeSlot, UserRole
 
 router = APIRouter()
 
@@ -304,3 +306,63 @@ def remove_space(space_id: str) -> None:
         usecase.remove_space(space_id)
     except DomainError as e:
         raise _handle_domain_error(e) from e
+
+
+# --- Chat Endpoint ---
+
+
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    tags=["chat"],
+)
+async def chat(request: ChatRequest) -> ChatResponse:
+    """Send a message to the parking reservation chatbot.
+
+    The chatbot can help with checking availability, making reservations,
+    viewing reservations, and admin operations.
+    """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        UserPromptPart,
+    )
+
+    try:
+        role = UserRole(request.user_role)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid user role: {request.user_role}. Use 'client' or 'admin'.",
+        ) from None
+
+    agent = dependencies.get_parking_agent()
+    chat_deps = dependencies.get_chat_deps(request.user_id, role)
+
+    # Build message history from conversation_history
+    message_history: list[ModelMessage] = []
+    for msg in request.conversation_history:
+        if msg.role == "user":
+            message_history.append(
+                ModelRequest(parts=[UserPromptPart(content=msg.content)])
+            )
+        elif msg.role == "assistant":
+            message_history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+
+    try:
+        result = await agent.run(
+            request.message,
+            deps=chat_deps,
+            message_history=message_history or None,
+        )
+        return ChatResponse(
+            response=result.output,
+            user_id=request.user_id,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chatbot error: {e}",
+        ) from e

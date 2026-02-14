@@ -80,3 +80,32 @@ class ErrorResponse(BaseModel):
 
     detail: str
     error_type: str
+
+
+class ChatMessage(BaseModel):
+    """A single message in a chat conversation."""
+
+    role: str = Field(description="Message role: 'user' or 'assistant'")
+    content: str = Field(description="Message content")
+
+
+class ChatRequest(BaseModel):
+    """Request model for the chat endpoint."""
+
+    message: str = Field(description="User's message to the chatbot")
+    user_id: UUID = Field(description="User making the request")
+    user_role: str = Field(
+        default="client",
+        description="User role: 'client' or 'admin'",
+    )
+    conversation_history: list[ChatMessage] = Field(
+        default_factory=list,
+        description="Previous messages in the conversation for context",
+    )
+
+
+class ChatResponse(BaseModel):
+    """Response model for the chat endpoint."""
+
+    response: str = Field(description="Chatbot's response message")
+    user_id: UUID = Field(description="User who made the request")

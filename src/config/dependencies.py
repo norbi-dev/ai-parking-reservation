@@ -9,6 +9,8 @@ from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
+from loguru import logger
+
 from src.adapters.outgoing.persistence.in_memory import (
     InMemoryParkingSpaceRepository,
     InMemoryReservationRepository,
@@ -35,7 +37,13 @@ def get_settings() -> Settings:
     Returns:
         Application settings loaded from environment
     """
-    return Settings()
+    settings = Settings()
+    logger.info(
+        "Settings loaded: local_mode={}, use_postgres={}",
+        settings.local_mode,
+        settings.use_postgres,
+    )
+    return settings
 
 
 @lru_cache
@@ -53,9 +61,12 @@ def _get_db_session() -> Any:
     )
 
     settings = get_settings()
+    logger.debug("Creating database session for PostgreSQL")
     create_tables(settings.database_url)
     engine = create_db_engine(settings.database_url)
-    return Session(engine)
+    session = Session(engine)
+    logger.info("Database session created")
+    return session
 
 
 @lru_cache
@@ -69,12 +80,14 @@ def get_reservation_repository() -> ReservationRepository:
     """
     settings = get_settings()
     if settings.use_postgres:
+        logger.debug("Using PostgreSQL reservation repository")
         from src.adapters.outgoing.persistence.postgres import (
             PostgresReservationRepository,
         )
 
         return PostgresReservationRepository(session=_get_db_session())
 
+    logger.debug("Using in-memory reservation repository")
     return InMemoryReservationRepository()
 
 
@@ -89,6 +102,7 @@ def get_parking_space_repository() -> ParkingSpaceRepository:
     """
     settings = get_settings()
     if settings.use_postgres:
+        logger.debug("Using PostgreSQL parking space repository")
         from src.adapters.outgoing.persistence.postgres import (
             PostgresParkingSpaceRepository,
         )
@@ -99,6 +113,7 @@ def get_parking_space_repository() -> ParkingSpaceRepository:
         _seed_parking_spaces(repo)
         return repo
 
+    logger.debug("Using in-memory parking space repository")
     in_memory_repo = InMemoryParkingSpaceRepository()
     _seed_parking_spaces(in_memory_repo)
     return in_memory_repo
@@ -115,12 +130,14 @@ def get_user_repository() -> UserRepository:
     """
     settings = get_settings()
     if settings.use_postgres:
+        logger.debug("Using PostgreSQL user repository")
         from src.adapters.outgoing.persistence.postgres import (
             PostgresUserRepository,
         )
 
         return PostgresUserRepository(session=_get_db_session())
 
+    logger.debug("Using in-memory user repository")
     return InMemoryUserRepository()
 
 
@@ -191,7 +208,10 @@ def _seed_parking_spaces(repo: ParkingSpaceRepository) -> None:
     """
     # Skip seeding if spaces already exist
     if repo.find_all():
+        logger.debug("Parking spaces already seeded, skipping")
         return
+
+    logger.info("Seeding {} sample parking spaces", 10)
 
     sample_spaces = [
         ParkingSpace(
@@ -273,8 +293,11 @@ def get_chatbot_model_name() -> str:
     if settings.local_mode:
         # pydantic-ai reads OLLAMA_BASE_URL from the environment
         os.environ.setdefault("OLLAMA_BASE_URL", settings.ollama_base_url)
-        return f"ollama:{settings.ollama_model}"
-    return f"openrouter:{settings.model_name}"
+        model = f"ollama:{settings.ollama_model}"
+    else:
+        model = f"openrouter:{settings.model_name}"
+    logger.debug("LLM model resolved: {}", model)
+    return model
 
 
 @lru_cache
@@ -287,6 +310,7 @@ def get_parking_agent() -> Any:
     from src.adapters.outgoing.llm.chatbot import create_parking_agent
 
     model_name = get_chatbot_model_name()
+    logger.info("Creating parking chatbot agent with model '{}'", model_name)
     return create_parking_agent(model_name)
 
 
@@ -302,6 +326,7 @@ def get_chat_deps(user_id: UUID, user_role: UserRole) -> Any:
     """
     from src.adapters.outgoing.llm.chatbot import ChatDeps
 
+    logger.debug("Creating ChatDeps: user={}, role={}", user_id, user_role.value)
     return ChatDeps(
         user_id=user_id,
         user_role=user_role,

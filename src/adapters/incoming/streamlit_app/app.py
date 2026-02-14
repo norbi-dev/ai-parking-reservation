@@ -10,6 +10,7 @@ import asyncio
 from uuid import uuid4
 
 import streamlit as st
+from loguru import logger
 
 from src.adapters.incoming.streamlit_app.chat_page import render_chat
 
@@ -18,6 +19,7 @@ def _init_session_state() -> None:
     """Initialize Streamlit session state with defaults."""
     if "user_id" not in st.session_state:
         st.session_state.user_id = str(uuid4())
+        logger.debug("Streamlit: new session user_id={}", st.session_state.user_id)
     if "user_role" not in st.session_state:
         st.session_state.user_role = "client"
     if "messages" not in st.session_state:
@@ -42,6 +44,11 @@ def _render_sidebar() -> None:
         )
         new_role = role.lower() if role else "client"
         if new_role != st.session_state.user_role:
+            logger.debug(
+                "Streamlit: role switched from {} to {}",
+                st.session_state.user_role,
+                new_role,
+            )
             st.session_state.user_role = new_role
             st.session_state.messages = []
             st.session_state.pending_prompt = None

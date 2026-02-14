@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     """Application configuration loaded from environment variables.
 
     Attributes:
+        log_level: Loguru console log level (DEBUG, INFO, WARNING, ERROR)
         local_mode: Use Ollama (true) or OpenRouter (false)
         openrouter_api_key: API key for OpenRouter
         model_name: Model name for remote mode
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
         api_port: FastAPI server port
     """
 
+    log_level: str = "DEBUG"
     local_mode: bool = True
     openrouter_api_key: str = ""
     model_name: str = "google/gemini-flash-1.5"

@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from loguru import logger
+
 from src.core.domain.models import (
     ParkingSpace,
     Reservation,
@@ -29,6 +31,7 @@ class InMemoryReservationRepository:
         Returns:
             The saved reservation
         """
+        logger.debug("InMemoryDB: save reservation={}", reservation.reservation_id)
         self._reservations[reservation.reservation_id] = reservation
         return reservation
 
@@ -41,7 +44,11 @@ class InMemoryReservationRepository:
         Returns:
             The reservation if found, None otherwise
         """
-        return self._reservations.get(reservation_id)
+        logger.debug("InMemoryDB: find reservation by id={}", reservation_id)
+        result = self._reservations.get(reservation_id)
+        if result is None:
+            logger.debug("InMemoryDB: reservation {} not found", reservation_id)
+        return result
 
     def find_by_user_id(
         self, user_id: UUID, status: ReservationStatus | None = None
@@ -55,9 +62,15 @@ class InMemoryReservationRepository:
         Returns:
             List of matching reservations
         """
+        logger.debug("InMemoryDB: find reservations by user={}", user_id)
         results = [r for r in self._reservations.values() if r.user_id == user_id]
         if status is not None:
             results = [r for r in results if r.status == status]
+        logger.debug(
+            "InMemoryDB: found {} reservation(s) for user={}",
+            len(results),
+            user_id,
+        )
         return results
 
     def find_by_status(self, status: ReservationStatus) -> list[Reservation]:
@@ -69,7 +82,14 @@ class InMemoryReservationRepository:
         Returns:
             List of matching reservations
         """
-        return [r for r in self._reservations.values() if r.status == status]
+        logger.debug("InMemoryDB: find reservations by status={}", status.value)
+        results = [r for r in self._reservations.values() if r.status == status]
+        logger.debug(
+            "InMemoryDB: found {} reservation(s) with status={}",
+            len(results),
+            status.value,
+        )
+        return results
 
     def find_by_space_and_time(
         self, space_id: str, time_slot: TimeSlot
@@ -83,12 +103,19 @@ class InMemoryReservationRepository:
         Returns:
             List of overlapping reservations
         """
+        logger.debug(
+            "InMemoryDB: find overlapping reservations space={}, slot={}–{}",
+            space_id,
+            time_slot.start_time,
+            time_slot.end_time,
+        )
         results = []
         for reservation in self._reservations.values():
             if reservation.space_id != space_id:
                 continue
             if self._time_slots_overlap(reservation.time_slot, time_slot):
                 results.append(reservation)
+        logger.debug("InMemoryDB: found {} overlapping reservation(s)", len(results))
         return results
 
     def update(self, reservation: Reservation) -> Reservation:
@@ -100,6 +127,7 @@ class InMemoryReservationRepository:
         Returns:
             The updated reservation
         """
+        logger.debug("InMemoryDB: update reservation={}", reservation.reservation_id)
         self._reservations[reservation.reservation_id] = reservation
         return reservation
 
@@ -109,6 +137,7 @@ class InMemoryReservationRepository:
         Args:
             reservation_id: Reservation identifier
         """
+        logger.debug("InMemoryDB: delete reservation={}", reservation_id)
         self._reservations.pop(reservation_id, None)
 
     @staticmethod
@@ -143,6 +172,7 @@ class InMemoryParkingSpaceRepository:
         Returns:
             The saved parking space
         """
+        logger.debug("InMemoryDB: save space={}", space.space_id)
         self._spaces[space.space_id] = space
         return space
 
@@ -155,6 +185,7 @@ class InMemoryParkingSpaceRepository:
         Returns:
             The parking space if found, None otherwise
         """
+        logger.debug("InMemoryDB: find space by id={}", space_id)
         return self._spaces.get(space_id)
 
     def find_all(self) -> list[ParkingSpace]:
@@ -163,7 +194,10 @@ class InMemoryParkingSpaceRepository:
         Returns:
             List of all parking spaces
         """
-        return list(self._spaces.values())
+        logger.debug("InMemoryDB: find_all spaces")
+        spaces = list(self._spaces.values())
+        logger.debug("InMemoryDB: found {} space(s)", len(spaces))
+        return spaces
 
     def find_available(self) -> list[ParkingSpace]:
         """Find all available parking spaces.
@@ -171,7 +205,10 @@ class InMemoryParkingSpaceRepository:
         Returns:
             List of available parking spaces
         """
-        return [s for s in self._spaces.values() if s.is_available]
+        logger.debug("InMemoryDB: find_available spaces")
+        available = [s for s in self._spaces.values() if s.is_available]
+        logger.debug("InMemoryDB: found {} available space(s)", len(available))
+        return available
 
     def update(self, space: ParkingSpace) -> ParkingSpace:
         """Update a parking space.
@@ -182,6 +219,7 @@ class InMemoryParkingSpaceRepository:
         Returns:
             The updated parking space
         """
+        logger.debug("InMemoryDB: update space={}", space.space_id)
         self._spaces[space.space_id] = space
         return space
 
@@ -191,6 +229,7 @@ class InMemoryParkingSpaceRepository:
         Args:
             space_id: Space identifier
         """
+        logger.debug("InMemoryDB: delete space={}", space_id)
         self._spaces.pop(space_id, None)
 
 
@@ -212,6 +251,7 @@ class InMemoryUserRepository:
         Returns:
             The saved user
         """
+        logger.debug("InMemoryDB: save user={}", user.user_id)
         self._users[user.user_id] = user
         return user
 
@@ -224,6 +264,7 @@ class InMemoryUserRepository:
         Returns:
             The user if found, None otherwise
         """
+        logger.debug("InMemoryDB: find user by id={}", user_id)
         return self._users.get(user_id)
 
     def find_by_username(self, username: str) -> User | None:
@@ -235,7 +276,9 @@ class InMemoryUserRepository:
         Returns:
             The user if found, None otherwise
         """
+        logger.debug("InMemoryDB: find user by username={}", username)
         for user in self._users.values():
             if user.username == username:
                 return user
+        logger.debug("InMemoryDB: user '{}' not found", username)
         return None

@@ -127,14 +127,70 @@ ollama pull gpt-oss:20b
 
 **Note:** The containers use `host.containers.internal` to access Ollama on your host machine.
 
-#### 5. Access the application
+#### 5. Troubleshooting: Container-to-Host Ollama Connectivity
+
+If you encounter connection errors when containers try to reach Ollama on the host, follow these steps:
+
+**Symptom:** Logs show `httpx.ConnectError: All connection attempts failed` or `Connection refused` when trying to connect to `http://host.containers.internal:11434`
+
+**Root Cause:** By default, Ollama only listens on `127.0.0.1:11434` (localhost), which is not accessible from containers even with the `host.containers.internal` hostname mapping.
+
+**Solution:**
+
+1. **Edit the Ollama service override configuration:**
+   ```bash
+   sudo nano /etc/systemd/system/ollama.service.d/override.conf
+   ```
+
+2. **Add the OLLAMA_HOST environment variable:**
+   
+   Add this line to make Ollama listen on all network interfaces:
+   ```ini
+   Environment="OLLAMA_HOST=0.0.0.0:11434"
+   ```
+   
+   The final file should look like:
+   ```ini
+   [Service]
+   Environment="OLLAMA_CONTEXT_LENGTH=4096"
+   Environment="OLLAMA_HOST=0.0.0.0:11434"
+   ```
+
+3. **Reload systemd and restart Ollama:**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart ollama
+   ```
+
+4. **Verify Ollama is listening on all interfaces:**
+   ```bash
+   ss -tlnp | grep 11434
+   ```
+   
+   You should see:
+   ```
+   LISTEN 0  4096  *:11434  *:*
+   ```
+   
+   (Notice `*:11434` instead of `127.0.0.1:11434`)
+
+5. **Test connectivity from a container:**
+   ```bash
+   podman exec parking-reservation-api python -c "import urllib.request; print(urllib.request.urlopen('http://host.containers.internal:11434/v1/models').status)"
+   ```
+   
+   Expected output: `200`
+
+**Security Note:** Making Ollama listen on `0.0.0.0` means it will accept connections from any network interface. If you're on a trusted network or using a firewall, this is generally safe. For production deployments, consider using more restrictive network configurations.
+
+#### 6. Access the application
 
 - **Client Interface**: http://localhost:8501
 - **Admin Interface**: http://localhost:8501 (select Admin from sidebar)
 - **REST API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/docs
 
-#### 6. Managing the services
+#### 7. Managing the services
 
 ```bash
 # View logs

@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from loguru import logger
+
 from src.core.domain.exceptions import (
     ReservationConflictError,
     SpaceNotAvailableError,
@@ -45,11 +47,20 @@ class ReserveParkingService:
             SpaceNotAvailableError: If the space is marked as unavailable
             ReservationConflictError: If the space is already reserved for the time slot
         """
+        logger.debug(
+            "ReserveParking: user={}, space={}, slot={}–{}",
+            user_id,
+            space_id,
+            time_slot.start_time,
+            time_slot.end_time,
+        )
         space = self._space_repo.find_by_id(space_id)
         if space is None:
+            logger.error("ReserveParking: space {} not found", space_id)
             raise SpaceNotFoundError(f"Parking space {space_id} not found")
 
         if not space.is_available:
+            logger.error("ReserveParking: space {} not available", space_id)
             raise SpaceNotAvailableError(
                 f"Space {space_id} is not available for reservations"
             )
@@ -61,6 +72,11 @@ class ReserveParkingService:
             if r.status in (ReservationStatus.PENDING, ReservationStatus.CONFIRMED)
         ]
         if active_conflicts:
+            logger.error(
+                "ReserveParking: conflict on space {} ({} existing)",
+                space_id,
+                len(active_conflicts),
+            )
             raise ReservationConflictError(
                 f"Space {space_id} already has a reservation "
                 "for the requested time slot"
@@ -72,4 +88,10 @@ class ReserveParkingService:
             time_slot=time_slot,
         )
 
-        return self._reservation_repo.save(reservation)
+        saved = self._reservation_repo.save(reservation)
+        logger.debug(
+            "ReserveParking: created reservation={}, status={}",
+            saved.reservation_id,
+            saved.status.value,
+        )
+        return saved

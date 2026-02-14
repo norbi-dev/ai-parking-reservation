@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from loguru import logger
+
 from src.core.domain.exceptions import ReservationNotFoundError
 from src.core.domain.models import Reservation, ReservationStatus
 from src.core.ports.outgoing.repositories import ReservationRepository
@@ -23,7 +25,10 @@ class AdminApprovalService:
         Returns:
             List of pending reservations
         """
-        return self._reservation_repo.find_by_status(ReservationStatus.PENDING)
+        logger.debug("AdminApproval: get_pending_reservations")
+        pending = self._reservation_repo.find_by_status(ReservationStatus.PENDING)
+        logger.debug("AdminApproval: found {} pending reservation(s)", len(pending))
+        return pending
 
     def approve_reservation(
         self, reservation_id: UUID, admin_notes: str = ""
@@ -40,12 +45,16 @@ class AdminApprovalService:
         Raises:
             ReservationNotFoundError: If reservation does not exist
         """
+        logger.debug("AdminApproval: approve reservation={}", reservation_id)
         reservation = self._reservation_repo.find_by_id(reservation_id)
         if reservation is None:
+            logger.error("AdminApproval: reservation {} not found", reservation_id)
             raise ReservationNotFoundError(f"Reservation {reservation_id} not found")
 
         reservation.approve(admin_notes)
-        return self._reservation_repo.update(reservation)
+        updated = self._reservation_repo.update(reservation)
+        logger.debug("AdminApproval: reservation {} approved", reservation_id)
+        return updated
 
     def reject_reservation(
         self, reservation_id: UUID, admin_notes: str = ""
@@ -62,9 +71,13 @@ class AdminApprovalService:
         Raises:
             ReservationNotFoundError: If reservation does not exist
         """
+        logger.debug("AdminApproval: reject reservation={}", reservation_id)
         reservation = self._reservation_repo.find_by_id(reservation_id)
         if reservation is None:
+            logger.error("AdminApproval: reservation {} not found", reservation_id)
             raise ReservationNotFoundError(f"Reservation {reservation_id} not found")
 
         reservation.reject(admin_notes)
-        return self._reservation_repo.update(reservation)
+        updated = self._reservation_repo.update(reservation)
+        logger.debug("AdminApproval: reservation {} rejected", reservation_id)
+        return updated

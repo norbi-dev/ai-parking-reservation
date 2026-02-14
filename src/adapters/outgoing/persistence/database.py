@@ -3,6 +3,7 @@
 Provides engine creation and session management for SQLModel-based repositories.
 """
 
+from loguru import logger
 from sqlalchemy import Engine
 from sqlmodel import SQLModel, create_engine
 
@@ -16,7 +17,9 @@ def create_db_engine(database_url: str) -> Engine:
     Returns:
         SQLAlchemy Engine instance
     """
+    logger.debug("Creating database engine for PostgreSQL")
     engine: Engine = create_engine(database_url, echo=False)
+    logger.info("Database engine created")
     return engine
 
 
@@ -33,5 +36,7 @@ def create_tables(database_url: str) -> None:
         UserDB,
     )
 
+    logger.debug("Creating database tables")
     engine = create_db_engine(database_url)
     SQLModel.metadata.create_all(engine)
+    logger.info("Database tables created successfully")

@@ -6,6 +6,7 @@ repositories, converting between domain models and SQLModel DB models.
 
 from uuid import UUID
 
+from loguru import logger
 from sqlmodel import Session, select
 
 from src.adapters.outgoing.persistence.models import (
@@ -41,10 +42,12 @@ class PostgresReservationRepository:
         Returns:
             The saved reservation
         """
+        logger.debug("PostgresDB: save reservation={}", reservation.reservation_id)
         db_model = self._to_db(reservation)
         self._session.add(db_model)
         self._session.commit()
         self._session.refresh(db_model)
+        logger.debug("PostgresDB: reservation {} saved", reservation.reservation_id)
         return self._to_domain(db_model)
 
     def find_by_id(self, reservation_id: UUID) -> Reservation | None:
@@ -56,8 +59,10 @@ class PostgresReservationRepository:
         Returns:
             The reservation if found, None otherwise
         """
+        logger.debug("PostgresDB: find reservation by id={}", reservation_id)
         db_model = self._session.get(ReservationDB, reservation_id)
         if db_model is None:
+            logger.debug("PostgresDB: reservation {} not found", reservation_id)
             return None
         return self._to_domain(db_model)
 
@@ -73,10 +78,16 @@ class PostgresReservationRepository:
         Returns:
             List of matching reservations
         """
+        logger.debug("PostgresDB: find reservations by user={}", user_id)
         statement = select(ReservationDB).where(ReservationDB.user_id == user_id)
         if status is not None:
             statement = statement.where(ReservationDB.status == status.value)
         results = self._session.exec(statement).all()
+        logger.debug(
+            "PostgresDB: found {} reservation(s) for user={}",
+            len(results),
+            user_id,
+        )
         return [self._to_domain(r) for r in results]
 
     def find_by_status(self, status: ReservationStatus) -> list[Reservation]:
@@ -88,8 +99,14 @@ class PostgresReservationRepository:
         Returns:
             List of matching reservations
         """
+        logger.debug("PostgresDB: find reservations by status={}", status.value)
         statement = select(ReservationDB).where(ReservationDB.status == status.value)
         results = self._session.exec(statement).all()
+        logger.debug(
+            "PostgresDB: found {} reservation(s) with status={}",
+            len(results),
+            status.value,
+        )
         return [self._to_domain(r) for r in results]
 
     def find_by_space_and_time(
@@ -107,12 +124,19 @@ class PostgresReservationRepository:
         Returns:
             List of overlapping reservations
         """
+        logger.debug(
+            "PostgresDB: find overlapping reservations space={}, slot={}–{}",
+            space_id,
+            time_slot.start_time,
+            time_slot.end_time,
+        )
         statement = select(ReservationDB).where(
             ReservationDB.space_id == space_id,
             ReservationDB.start_time < time_slot.end_time,
             ReservationDB.end_time > time_slot.start_time,
         )
         results = self._session.exec(statement).all()
+        logger.debug("PostgresDB: found {} overlapping reservation(s)", len(results))
         return [self._to_domain(r) for r in results]
 
     def update(self, reservation: Reservation) -> Reservation:
@@ -124,8 +148,13 @@ class PostgresReservationRepository:
         Returns:
             The updated reservation
         """
+        logger.debug("PostgresDB: update reservation={}", reservation.reservation_id)
         db_model = self._session.get(ReservationDB, reservation.reservation_id)
         if db_model is None:
+            logger.debug(
+                "PostgresDB: reservation {} not found for update, inserting",
+                reservation.reservation_id,
+            )
             # If not found, save as new (upsert behavior)
             return self.save(reservation)
 
@@ -141,6 +170,7 @@ class PostgresReservationRepository:
         self._session.add(db_model)
         self._session.commit()
         self._session.refresh(db_model)
+        logger.debug("PostgresDB: reservation {} updated", reservation.reservation_id)
         return self._to_domain(db_model)
 
     def delete(self, reservation_id: UUID) -> None:
@@ -149,10 +179,17 @@ class PostgresReservationRepository:
         Args:
             reservation_id: Reservation identifier
         """
+        logger.debug("PostgresDB: delete reservation={}", reservation_id)
         db_model = self._session.get(ReservationDB, reservation_id)
         if db_model is not None:
             self._session.delete(db_model)
             self._session.commit()
+            logger.debug("PostgresDB: reservation {} deleted", reservation_id)
+        else:
+            logger.debug(
+                "PostgresDB: reservation {} not found for deletion",
+                reservation_id,
+            )
 
     @staticmethod
     def _to_db(reservation: Reservation) -> ReservationDB:
@@ -219,9 +256,11 @@ class PostgresParkingSpaceRepository:
         Returns:
             The saved parking space
         """
+        logger.debug("PostgresDB: save space={}", space.space_id)
         db_model = self._to_db(space)
         self._session.merge(db_model)
         self._session.commit()
+        logger.debug("PostgresDB: space {} saved", space.space_id)
         return space
 
     def find_by_id(self, space_id: str) -> ParkingSpace | None:
@@ -233,8 +272,10 @@ class PostgresParkingSpaceRepository:
         Returns:
             The parking space if found, None otherwise
         """
+        logger.debug("PostgresDB: find space by id={}", space_id)
         db_model = self._session.get(ParkingSpaceDB, space_id)
         if db_model is None:
+            logger.debug("PostgresDB: space {} not found", space_id)
             return None
         return self._to_domain(db_model)
 
@@ -244,7 +285,9 @@ class PostgresParkingSpaceRepository:
         Returns:
             List of all parking spaces
         """
+        logger.debug("PostgresDB: find_all spaces")
         results = self._session.exec(select(ParkingSpaceDB)).all()
+        logger.debug("PostgresDB: found {} space(s)", len(results))
         return [self._to_domain(s) for s in results]
 
     def find_available(self) -> list[ParkingSpace]:
@@ -253,10 +296,12 @@ class PostgresParkingSpaceRepository:
         Returns:
             List of available parking spaces
         """
+        logger.debug("PostgresDB: find_available spaces")
         statement = select(ParkingSpaceDB).where(
             ParkingSpaceDB.is_available == True  # noqa: E712
         )
         results = self._session.exec(statement).all()
+        logger.debug("PostgresDB: found {} available space(s)", len(results))
         return [self._to_domain(s) for s in results]
 
     def update(self, space: ParkingSpace) -> ParkingSpace:
@@ -268,8 +313,13 @@ class PostgresParkingSpaceRepository:
         Returns:
             The updated parking space
         """
+        logger.debug("PostgresDB: update space={}", space.space_id)
         db_model = self._session.get(ParkingSpaceDB, space.space_id)
         if db_model is None:
+            logger.debug(
+                "PostgresDB: space {} not found for update, inserting",
+                space.space_id,
+            )
             return self.save(space)
 
         db_model.location = space.location
@@ -280,6 +330,7 @@ class PostgresParkingSpaceRepository:
         self._session.add(db_model)
         self._session.commit()
         self._session.refresh(db_model)
+        logger.debug("PostgresDB: space {} updated", space.space_id)
         return self._to_domain(db_model)
 
     def delete(self, space_id: str) -> None:
@@ -288,10 +339,14 @@ class PostgresParkingSpaceRepository:
         Args:
             space_id: Space identifier
         """
+        logger.debug("PostgresDB: delete space={}", space_id)
         db_model = self._session.get(ParkingSpaceDB, space_id)
         if db_model is not None:
             self._session.delete(db_model)
             self._session.commit()
+            logger.debug("PostgresDB: space {} deleted", space_id)
+        else:
+            logger.debug("PostgresDB: space {} not found for deletion", space_id)
 
     @staticmethod
     def _to_db(space: ParkingSpace) -> ParkingSpaceDB:
@@ -348,9 +403,11 @@ class PostgresUserRepository:
         Returns:
             The saved user
         """
+        logger.debug("PostgresDB: save user={}", user.user_id)
         db_model = self._to_db(user)
         self._session.merge(db_model)
         self._session.commit()
+        logger.debug("PostgresDB: user {} saved", user.user_id)
         return user
 
     def find_by_id(self, user_id: UUID) -> User | None:
@@ -362,8 +419,10 @@ class PostgresUserRepository:
         Returns:
             The user if found, None otherwise
         """
+        logger.debug("PostgresDB: find user by id={}", user_id)
         db_model = self._session.get(UserDB, user_id)
         if db_model is None:
+            logger.debug("PostgresDB: user {} not found", user_id)
             return None
         return self._to_domain(db_model)
 
@@ -376,9 +435,11 @@ class PostgresUserRepository:
         Returns:
             The user if found, None otherwise
         """
+        logger.debug("PostgresDB: find user by username={}", username)
         statement = select(UserDB).where(UserDB.username == username)
         db_model = self._session.exec(statement).first()
         if db_model is None:
+            logger.debug("PostgresDB: user '{}' not found", username)
             return None
         return self._to_domain(db_model)
 

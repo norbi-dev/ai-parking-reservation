@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from uuid import UUID
 
+from loguru import logger
 from pydantic_ai import Agent, RunContext
 
 from src.adapters.incoming.streamlit_app.chat_widgets import (
@@ -133,6 +134,7 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         deps_type=ChatDeps,
         output_type=str,
     )
+    logger.info("LLM agent created with model '{}'", model_name)
 
     @agent.system_prompt
     def add_user_context(ctx: RunContext[ChatDeps]) -> str:
@@ -178,12 +180,24 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             end_dt = datetime.fromisoformat(end_time)
             time_slot = TimeSlot(start_time=start_dt, end_time=end_dt)
         except (ValueError, TypeError) as e:
+            logger.error("LLM tool check_availability: invalid datetime: {}", e)
             return f"Invalid date/time format: {e}. Use YYYY-MM-DDTHH:MM format."
 
+        logger.debug(
+            "LLM tool check_availability: slot={}–{}",
+            start_time,
+            end_time,
+        )
         try:
             spaces = ctx.deps.check_availability.execute(time_slot)
         except DomainError as e:
+            logger.error("LLM tool check_availability: {}", e)
             return f"Error checking availability: {e}"
+
+        logger.debug(
+            "LLM tool check_availability: found {} available space(s)",
+            len(spaces),
+        )
 
         if not spaces:
             msg = "No parking spaces available for the requested time."
@@ -220,8 +234,16 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             end_dt = datetime.fromisoformat(end_time)
             time_slot = TimeSlot(start_time=start_dt, end_time=end_dt)
         except (ValueError, TypeError) as e:
+            logger.error("LLM tool reserve_space: invalid datetime: {}", e)
             return f"Invalid date/time format: {e}. Use YYYY-MM-DDTHH:MM format."
 
+        logger.debug(
+            "LLM tool reserve_space: user={}, space={}, slot={}–{}",
+            ctx.deps.user_id,
+            space_id,
+            start_time,
+            end_time,
+        )
         try:
             reservation = ctx.deps.reserve_parking.execute(
                 user_id=ctx.deps.user_id,
@@ -229,7 +251,13 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
                 time_slot=time_slot,
             )
         except DomainError as e:
+            logger.error("LLM tool reserve_space: {}", e)
             return f"Could not create reservation: {e}"
+
+        logger.debug(
+            "LLM tool reserve_space: created reservation={}",
+            reservation.reservation_id,
+        )
 
         return ReservationCreatedResponse(
             message="Reservation created successfully! Awaiting admin approval.",
@@ -246,8 +274,13 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         Returns:
             JSON widget response with user's reservations
         """
+        logger.debug("LLM tool get_my_reservations: user={}", ctx.deps.user_id)
         reservations = ctx.deps.manage_reservations.get_user_reservations(
             ctx.deps.user_id
+        )
+        logger.debug(
+            "LLM tool get_my_reservations: found {} reservation(s)",
+            len(reservations),
         )
         if not reservations:
             return MyReservationsResponse(
@@ -277,14 +310,29 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         try:
             res_uuid = UUID(reservation_id)
         except ValueError:
+            logger.error(
+                "LLM tool cancel_reservation: invalid UUID: {}",
+                reservation_id,
+            )
             return f"Invalid reservation ID format: {reservation_id}"
 
+        logger.debug(
+            "LLM tool cancel_reservation: reservation={}, user={}",
+            reservation_id,
+            ctx.deps.user_id,
+        )
         try:
             reservation = ctx.deps.manage_reservations.cancel_reservation(
                 res_uuid, ctx.deps.user_id
             )
         except DomainError as e:
+            logger.error("LLM tool cancel_reservation: {}", e)
             return f"Could not cancel reservation: {e}"
+
+        logger.debug(
+            "LLM tool cancel_reservation: reservation {} cancelled",
+            reservation_id,
+        )
 
         return ReservationActionResponse(
             message="Reservation cancelled successfully.",
@@ -301,7 +349,9 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         Returns:
             JSON widget response with all parking spaces
         """
+        logger.debug("LLM tool list_all_spaces")
         spaces = ctx.deps.manage_spaces.get_all_spaces()
+        logger.debug("LLM tool list_all_spaces: found {} space(s)", len(spaces))
         if not spaces:
             return AllSpacesResponse(
                 message="No parking spaces are configured in the system.",
@@ -326,9 +376,15 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             JSON widget response with pending reservations
         """
         if ctx.deps.user_role != UserRole.ADMIN:
+            logger.debug("LLM tool get_pending_reservations: access denied (not admin)")
             return "Access denied. Only administrators can view pending reservations."
 
+        logger.debug("LLM tool get_pending_reservations")
         pending = ctx.deps.admin_approval.get_pending_reservations()
+        logger.debug(
+            "LLM tool get_pending_reservations: found {} pending",
+            len(pending),
+        )
         if not pending:
             return PendingReservationsResponse(
                 message="No reservations pending approval.",
@@ -357,19 +413,34 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             JSON widget response with approved reservation details
         """
         if ctx.deps.user_role != UserRole.ADMIN:
+            logger.debug("LLM tool approve_reservation: access denied (not admin)")
             return "Access denied. Only administrators can approve reservations."
 
         try:
             res_uuid = UUID(reservation_id)
         except ValueError:
+            logger.error(
+                "LLM tool approve_reservation: invalid UUID: {}",
+                reservation_id,
+            )
             return f"Invalid reservation ID format: {reservation_id}"
 
+        logger.debug(
+            "LLM tool approve_reservation: reservation={}",
+            reservation_id,
+        )
         try:
             reservation = ctx.deps.admin_approval.approve_reservation(
                 res_uuid, admin_notes
             )
         except DomainError as e:
+            logger.error("LLM tool approve_reservation: {}", e)
             return f"Could not approve reservation: {e}"
+
+        logger.debug(
+            "LLM tool approve_reservation: reservation {} approved",
+            reservation_id,
+        )
 
         return ReservationActionResponse(
             message="Reservation approved successfully!",
@@ -393,19 +464,34 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             JSON widget response with rejected reservation details
         """
         if ctx.deps.user_role != UserRole.ADMIN:
+            logger.debug("LLM tool reject_reservation: access denied (not admin)")
             return "Access denied. Only administrators can reject reservations."
 
         try:
             res_uuid = UUID(reservation_id)
         except ValueError:
+            logger.error(
+                "LLM tool reject_reservation: invalid UUID: {}",
+                reservation_id,
+            )
             return f"Invalid reservation ID format: {reservation_id}"
 
+        logger.debug(
+            "LLM tool reject_reservation: reservation={}",
+            reservation_id,
+        )
         try:
             reservation = ctx.deps.admin_approval.reject_reservation(
                 res_uuid, admin_notes
             )
         except DomainError as e:
+            logger.error("LLM tool reject_reservation: {}", e)
             return f"Could not reject reservation: {e}"
+
+        logger.debug(
+            "LLM tool reject_reservation: reservation {} rejected",
+            reservation_id,
+        )
 
         return ReservationActionResponse(
             message="Reservation rejected.",
@@ -433,8 +519,14 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             JSON widget response with the added space details
         """
         if ctx.deps.user_role != UserRole.ADMIN:
+            logger.debug("LLM tool add_parking_space: access denied (not admin)")
             return "Access denied. Only administrators can add parking spaces."
 
+        logger.debug(
+            "LLM tool add_parking_space: id={}, location={}",
+            space_id,
+            location,
+        )
         space = ParkingSpace(
             space_id=space_id,
             location=location,
@@ -444,7 +536,10 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
         try:
             created = ctx.deps.manage_spaces.add_space(space)
         except DomainError as e:
+            logger.error("LLM tool add_parking_space: {}", e)
             return f"Could not add parking space: {e}"
+
+        logger.debug("LLM tool add_parking_space: space {} added", created.space_id)
 
         return SpaceActionResponse(
             message="Parking space added successfully!",
@@ -466,12 +561,17 @@ def create_parking_agent(model_name: str) -> Agent[ChatDeps, str]:
             Confirmation or error message
         """
         if ctx.deps.user_role != UserRole.ADMIN:
+            logger.debug("LLM tool remove_parking_space: access denied (not admin)")
             return "Access denied. Only administrators can remove parking spaces."
 
+        logger.debug("LLM tool remove_parking_space: id={}", space_id)
         try:
             ctx.deps.manage_spaces.remove_space(space_id)
         except DomainError as e:
+            logger.error("LLM tool remove_parking_space: {}", e)
             return f"Could not remove parking space: {e}"
+
+        logger.debug("LLM tool remove_parking_space: space {} removed", space_id)
 
         return SpaceActionResponse(
             message=f"Parking space {space_id} removed successfully.",

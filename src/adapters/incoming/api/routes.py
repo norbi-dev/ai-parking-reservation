@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
+from loguru import logger
 
 from src.adapters.incoming.api.schemas import (
     AdminActionRequest,
@@ -87,6 +88,12 @@ def _handle_domain_error(error: DomainError) -> HTTPException:
         AuthorizationError: status.HTTP_403_FORBIDDEN,
     }
     http_status = status_map.get(type(error), status.HTTP_400_BAD_REQUEST)
+    logger.error(
+        "Domain error → HTTP {}: {} ({})",
+        http_status,
+        error,
+        type(error).__name__,
+    )
     return HTTPException(status_code=http_status, detail=str(error))
 
 
@@ -112,11 +119,22 @@ def create_reservation(
             start_time=request.time_slot.start_time,
             end_time=request.time_slot.end_time,
         )
+        logger.debug(
+            "API create_reservation: user={}, space={}, slot={}–{}",
+            request.user_id,
+            request.space_id,
+            request.time_slot.start_time,
+            request.time_slot.end_time,
+        )
         usecase = dependencies.get_reserve_parking_usecase()
         reservation = usecase.execute(
             user_id=request.user_id,
             space_id=request.space_id,
             time_slot=time_slot,
+        )
+        logger.debug(
+            "API create_reservation: success, id={}",
+            reservation.reservation_id,
         )
         return _reservation_to_response(reservation)
     except DomainError as e:
@@ -130,6 +148,7 @@ def create_reservation(
 )
 def get_reservation(reservation_id: UUID) -> ReservationResponse:
     """Get a specific reservation by ID."""
+    logger.debug("API get_reservation: id={}", reservation_id)
     try:
         usecase = dependencies.get_manage_reservations_usecase()
         reservation = usecase.get_reservation(reservation_id)
@@ -145,6 +164,7 @@ def get_reservation(reservation_id: UUID) -> ReservationResponse:
 )
 def get_user_reservations(user_id: UUID) -> list[ReservationResponse]:
     """Get all reservations for a specific user."""
+    logger.debug("API get_user_reservations: user={}", user_id)
     usecase = dependencies.get_manage_reservations_usecase()
     reservations = usecase.get_user_reservations(user_id)
     return [_reservation_to_response(r) for r in reservations]
@@ -157,6 +177,7 @@ def get_user_reservations(user_id: UUID) -> list[ReservationResponse]:
 )
 def cancel_reservation(reservation_id: UUID, user_id: UUID) -> ReservationResponse:
     """Cancel a reservation."""
+    logger.debug("API cancel_reservation: id={}, user={}", reservation_id, user_id)
     try:
         usecase = dependencies.get_manage_reservations_usecase()
         reservation = usecase.cancel_reservation(reservation_id, user_id)
@@ -177,6 +198,11 @@ def check_availability(
     request: AvailabilityRequest,
 ) -> list[ParkingSpaceResponse]:
     """Check available parking spaces for a given time slot."""
+    logger.debug(
+        "API check_availability: slot={}–{}",
+        request.time_slot.start_time,
+        request.time_slot.end_time,
+    )
     time_slot = TimeSlot(
         start_time=request.time_slot.start_time,
         end_time=request.time_slot.end_time,
@@ -196,6 +222,7 @@ def check_availability(
 )
 def get_pending_reservations() -> list[ReservationResponse]:
     """Get all reservations pending admin approval."""
+    logger.debug("API get_pending_reservations")
     usecase = dependencies.get_admin_approval_usecase()
     reservations = usecase.get_pending_reservations()
     return [_reservation_to_response(r) for r in reservations]
@@ -211,6 +238,7 @@ def approve_reservation(
     request: AdminActionRequest | None = None,
 ) -> ReservationResponse:
     """Approve a pending reservation."""
+    logger.debug("API approve_reservation: id={}", reservation_id)
     try:
         admin_notes = request.admin_notes if request else ""
         usecase = dependencies.get_admin_approval_usecase()
@@ -230,6 +258,7 @@ def reject_reservation(
     request: AdminActionRequest | None = None,
 ) -> ReservationResponse:
     """Reject a pending reservation."""
+    logger.debug("API reject_reservation: id={}", reservation_id)
     try:
         admin_notes = request.admin_notes if request else ""
         usecase = dependencies.get_admin_approval_usecase()
@@ -249,6 +278,7 @@ def reject_reservation(
 )
 def get_all_spaces() -> list[ParkingSpaceResponse]:
     """Get all parking spaces."""
+    logger.debug("API get_all_spaces")
     usecase = dependencies.get_manage_parking_spaces_usecase()
     spaces = usecase.get_all_spaces()
     return [_space_to_response(s) for s in spaces]
@@ -262,6 +292,9 @@ def get_all_spaces() -> list[ParkingSpaceResponse]:
 )
 def add_space(request: ParkingSpaceRequest) -> ParkingSpaceResponse:
     """Add a new parking space."""
+    logger.debug(
+        "API add_space: id={}, location={}", request.space_id, request.location
+    )
     space = ParkingSpace(
         space_id=request.space_id,
         location=request.location,
@@ -281,6 +314,7 @@ def add_space(request: ParkingSpaceRequest) -> ParkingSpaceResponse:
 )
 def update_space(space_id: str, request: ParkingSpaceRequest) -> ParkingSpaceResponse:
     """Update an existing parking space."""
+    logger.debug("API update_space: id={}", space_id)
     try:
         space = ParkingSpace(
             space_id=space_id,
@@ -303,6 +337,7 @@ def update_space(space_id: str, request: ParkingSpaceRequest) -> ParkingSpaceRes
 )
 def remove_space(space_id: str) -> None:
     """Remove a parking space."""
+    logger.debug("API remove_space: id={}", space_id)
     try:
         usecase = dependencies.get_manage_parking_spaces_usecase()
         usecase.remove_space(space_id)
@@ -335,6 +370,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
     try:
         role = UserRole(request.user_role)
     except ValueError:
+        logger.error("API chat: invalid user role '{}'", request.user_role)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid user role: {request.user_role}. Use 'client' or 'admin'.",
@@ -342,6 +378,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     agent = dependencies.get_parking_agent()
     chat_deps = dependencies.get_chat_deps(request.user_id, role)
+
+    logger.debug(
+        "API chat: user={}, role={}, message='{}'",
+        request.user_id,
+        role.value,
+        request.message[:100],
+    )
 
     # Build message history from conversation_history
     message_history: list[ModelMessage] = []
@@ -359,11 +402,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
             deps=chat_deps,
             message_history=message_history or None,
         )
+        logger.debug("API chat: response length={}", len(result.output))
         return ChatResponse(
             response=result.output,
             user_id=request.user_id,
         )
     except Exception as e:
+        logger.exception("API chat: chatbot error: {}", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Chatbot error: {e}",

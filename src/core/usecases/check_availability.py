@@ -1,5 +1,7 @@
 """Use case implementation for checking parking space availability."""
 
+from loguru import logger
+
 from src.core.domain.models import ParkingSpace, ReservationStatus, TimeSlot
 from src.core.ports.outgoing.repositories import (
     ParkingSpaceRepository,
@@ -31,6 +33,11 @@ class CheckAvailabilityService:
         Returns:
             List of available parking spaces with no active conflicts
         """
+        logger.debug(
+            "CheckAvailability: slot={}–{}",
+            time_slot.start_time,
+            time_slot.end_time,
+        )
         all_spaces = self._space_repo.find_available()
         available = []
 
@@ -38,6 +45,11 @@ class CheckAvailabilityService:
             if self.is_space_available(space.space_id, time_slot):
                 available.append(space)
 
+        logger.debug(
+            "CheckAvailability: {}/{} spaces available",
+            len(available),
+            len(all_spaces),
+        )
         return available
 
     def is_space_available(self, space_id: str, time_slot: TimeSlot) -> bool:

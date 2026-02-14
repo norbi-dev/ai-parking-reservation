@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 import streamlit as st
+from loguru import logger
 
 from src.adapters.incoming.streamlit_app.chat_widgets import parse_widget_response
 from src.config import dependencies
@@ -178,21 +179,29 @@ def _render_reservation_card(
 
 def _handle_admin_action(reservation_id: str, action: str, admin_notes: str) -> None:
     """Execute an admin approve/reject directly and inject result into chat."""
+    logger.debug(
+        "Streamlit admin action: {} reservation={}",
+        action,
+        reservation_id,
+    )
     usecase = dependencies.get_admin_approval_usecase()
     try:
         res_uuid = UUID(reservation_id)
         if action == "approve":
             usecase.approve_reservation(res_uuid, admin_notes)
+            logger.debug("Streamlit: reservation {} approved", reservation_id)
             st.session_state.pending_prompt = (
                 f"I just approved reservation {reservation_id}"
             )
         else:
             usecase.reject_reservation(res_uuid, admin_notes)
+            logger.debug("Streamlit: reservation {} rejected", reservation_id)
             st.session_state.pending_prompt = (
                 f"I just rejected reservation {reservation_id}"
             )
         st.rerun()
     except DomainError as e:
+        logger.error("Streamlit admin action failed: {}", e)
         st.error(str(e))
 
 
@@ -352,6 +361,7 @@ def render_chat() -> None:
 
 def _process_user_message(prompt: str) -> None:
     """Process a user message: show it, get response, and display it."""
+    logger.debug("Streamlit: user message received (length={})", len(prompt))
     # Add user message to history and display
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -378,6 +388,13 @@ def _get_chatbot_response(user_message: str) -> str:
     """
     user_id = UUID(st.session_state.user_id)
     user_role = UserRole(st.session_state.user_role)
+
+    logger.debug(
+        "Streamlit → LLM: user={}, role={}, message='{}'",
+        user_id,
+        user_role.value,
+        user_message[:100],
+    )
 
     agent = dependencies.get_parking_agent()
     chat_deps = dependencies.get_chat_deps(user_id, user_role)
@@ -411,6 +428,8 @@ def _get_chatbot_response(user_message: str) -> str:
                 message_history=message_history or None,
             )
         )
+        logger.debug("Streamlit ← LLM: response length={}", len(str(result.output)))
         return str(result.output)
     except Exception as e:
+        logger.exception("Streamlit: chatbot error: {}", e)
         return f"Sorry, I encountered an error: {e}"

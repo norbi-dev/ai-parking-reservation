@@ -12,6 +12,7 @@ from uuid import UUID
 from loguru import logger
 
 from src.adapters.outgoing.persistence.in_memory import (
+    InMemoryConversationSessionRepository,
     InMemoryParkingSpaceRepository,
     InMemoryReservationRepository,
     InMemoryUserRepository,
@@ -19,11 +20,13 @@ from src.adapters.outgoing.persistence.in_memory import (
 from src.config.settings import Settings
 from src.core.domain.models import ParkingSpace, UserRole
 from src.core.ports.outgoing.repositories import (
+    ConversationSessionRepository,
     ParkingSpaceRepository,
     ReservationRepository,
     UserRepository,
 )
 from src.core.usecases.admin_approval import AdminApprovalService
+from src.core.usecases.chat_conversation import ChatConversationService
 from src.core.usecases.check_availability import CheckAvailabilityService
 from src.core.usecases.manage_parking_spaces import ManageParkingSpacesService
 from src.core.usecases.manage_reservations import ManageReservationsService
@@ -139,6 +142,20 @@ def get_user_repository() -> UserRepository:
 
     logger.debug("Using in-memory user repository")
     return InMemoryUserRepository()
+
+
+@lru_cache
+def get_conversation_session_repository() -> ConversationSessionRepository:
+    """Get conversation session repository (cached).
+
+    Currently only supports in-memory storage.
+    TODO: Add PostgreSQL implementation for production.
+
+    Returns:
+        Conversation session repository instance
+    """
+    logger.debug("Using in-memory conversation session repository")
+    return InMemoryConversationSessionRepository()
 
 
 def get_reserve_parking_usecase() -> ReserveParkingService:
@@ -335,4 +352,18 @@ def get_chat_deps(user_id: UUID, user_role: UserRole) -> Any:
         manage_reservations=get_manage_reservations_usecase(),
         admin_approval=get_admin_approval_usecase(),
         manage_spaces=get_manage_parking_spaces_usecase(),
+    )
+
+
+@lru_cache
+def get_chat_conversation_service() -> ChatConversationService:
+    """Get chat conversation service (cached).
+
+    Returns:
+        ChatConversationService wired with agent and session repository
+    """
+    logger.debug("Creating chat conversation service")
+    return ChatConversationService(
+        session_repo=get_conversation_session_repository(),
+        agent=get_parking_agent(),
     )

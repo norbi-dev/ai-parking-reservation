@@ -8,6 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from src.core.domain.models import (
+    ConversationSession,
     ParkingSpace,
     Reservation,
     ReservationStatus,
@@ -194,5 +195,61 @@ class UserRepository(Protocol):
 
         Returns:
             The user if found, None otherwise
+        """
+        ...
+
+
+class ConversationSessionRepository(Protocol):
+    """Repository interface for conversation session persistence."""
+
+    def save(self, session: ConversationSession) -> ConversationSession:
+        """Save a conversation session.
+
+        Args:
+            session: Conversation session to save
+
+        Returns:
+            The saved session
+        """
+        ...
+
+    def find_by_id(self, session_id: UUID) -> ConversationSession | None:
+        """Find a conversation session by its ID.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            The session if found, None otherwise
+        """
+        ...
+
+    def find_by_user_id(self, user_id: UUID) -> list[ConversationSession]:
+        """Find all conversation sessions for a user.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            List of sessions for the user
+        """
+        ...
+
+    def update(self, session: ConversationSession) -> ConversationSession:
+        """Update an existing conversation session.
+
+        Args:
+            session: Session with updated data
+
+        Returns:
+            The updated session
+        """
+        ...
+
+    def delete(self, session_id: UUID) -> None:
+        """Delete a conversation session.
+
+        Args:
+            session_id: Session identifier
         """
         ...

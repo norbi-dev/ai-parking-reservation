@@ -23,7 +23,11 @@ def _init_session_state() -> None:
     if "user_role" not in st.session_state:
         st.session_state.user_role = "client"
     if "messages" not in st.session_state:
+        # Display messages for UI rendering (role + content)
         st.session_state.messages = []
+    if "backend_session_id" not in st.session_state:
+        # Backend conversation session ID - will be created on first message
+        st.session_state.backend_session_id = None
     if "event_loop" not in st.session_state:
         st.session_state.event_loop = asyncio.new_event_loop()
     if "pending_prompt" not in st.session_state:
@@ -51,6 +55,7 @@ def _render_sidebar() -> None:
             )
             st.session_state.user_role = new_role
             st.session_state.messages = []
+            st.session_state.backend_session_id = None  # Clear backend session
             st.session_state.pending_prompt = None
             st.rerun()
 
@@ -70,6 +75,7 @@ def _render_sidebar() -> None:
         # Clear chat button
         if st.button("Clear Chat", use_container_width=True):
             st.session_state.messages = []
+            st.session_state.backend_session_id = None  # Clear backend session
             st.session_state.pending_prompt = None
             st.rerun()
 

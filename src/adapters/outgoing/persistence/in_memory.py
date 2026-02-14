@@ -5,6 +5,7 @@ from uuid import UUID
 from loguru import logger
 
 from src.core.domain.models import (
+    ConversationSession,
     ParkingSpace,
     Reservation,
     ReservationStatus,
@@ -282,3 +283,77 @@ class InMemoryUserRepository:
                 return user
         logger.debug("InMemoryDB: user '{}' not found", username)
         return None
+
+
+class InMemoryConversationSessionRepository:
+    """In-memory implementation of ConversationSessionRepository.
+
+    Stores conversation sessions in a dictionary for development and testing.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: dict[UUID, ConversationSession] = {}
+
+    def save(self, session: ConversationSession) -> ConversationSession:
+        """Save a conversation session to memory.
+
+        Args:
+            session: Conversation session to save
+
+        Returns:
+            The saved session
+        """
+        logger.debug("InMemoryDB: save session={}", session.session_id)
+        self._sessions[session.session_id] = session
+        return session
+
+    def find_by_id(self, session_id: UUID) -> ConversationSession | None:
+        """Find a conversation session by its ID.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            The session if found, None otherwise
+        """
+        logger.debug("InMemoryDB: find session by id={}", session_id)
+        result = self._sessions.get(session_id)
+        if result is None:
+            logger.debug("InMemoryDB: session {} not found", session_id)
+        return result
+
+    def find_by_user_id(self, user_id: UUID) -> list[ConversationSession]:
+        """Find all conversation sessions for a user.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            List of sessions for the user
+        """
+        logger.debug("InMemoryDB: find sessions by user_id={}", user_id)
+        sessions = [s for s in self._sessions.values() if s.user_id == user_id]
+        logger.debug("InMemoryDB: found {} session(s)", len(sessions))
+        return sessions
+
+    def update(self, session: ConversationSession) -> ConversationSession:
+        """Update an existing conversation session.
+
+        Args:
+            session: Session with updated data
+
+        Returns:
+            The updated session
+        """
+        logger.debug("InMemoryDB: update session={}", session.session_id)
+        self._sessions[session.session_id] = session
+        return session
+
+    def delete(self, session_id: UUID) -> None:
+        """Delete a conversation session.
+
+        Args:
+            session_id: Session identifier
+        """
+        logger.debug("InMemoryDB: delete session={}", session_id)
+        self._sessions.pop(session_id, None)

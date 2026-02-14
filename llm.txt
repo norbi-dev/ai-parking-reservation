@@ -1,6 +1,6 @@
 # ai-parking-reservation
 
-> LLM-powered chatbot for managing parking space reservations via natural language, built on Hexagonal Architecture with human-in-the-loop admin approval.
+> LLM-powered chatbot for managing parking space reservations via natural language, built on Hexagonal Architecture with human-in-the-loop admin approval and backend-managed conversation memory.
 
 ## Tech Stack
 
@@ -9,6 +9,7 @@
 | Python | >=3.13 (runtime 3.13) |
 | Package manager | uv |
 | LLM framework | pydantic-ai >=0.1.0 |
+| Logging | loguru >=0.7.0 |
 | Web API | FastAPI >=0.115.0, uvicorn >=0.30.0 |
 | Chat UI | Streamlit >=1.40.0 |
 | Validation | Pydantic >=2.10.0, pydantic-settings >=2.6.0 |
@@ -46,6 +47,9 @@ podman-compose up -d                      # All services (postgres, api, streaml
 - Run `ruff check --fix . && ruff format .` after every implementation
 - Get use cases via `dependencies.get_*_usecase()` — never instantiate services directly in adapters
 - Admin chatbot tools must guard with `if ctx.deps.user_role != UserRole.ADMIN: return "Access denied..."`
+- **Conversation state managed on backend** — Frontend NEVER stores conversation history
+- Use `ChatConversationService` for all chat interactions — it manages Pydantic AI message history
+- Frontend only stores `backend_session_id` reference — ALL memory on backend
 
 ### NEVER
 - Import from `adapters/` or `config/` inside `src/core/`
@@ -55,6 +59,8 @@ podman-compose up -d                      # All services (postgres, api, streaml
 - Put business logic in adapters — push it into use case services
 - Commit `.env` files (use `.env.example` as template)
 - Skip the `from e` in `raise HTTPException(...) from e`
+- **Store conversation history in frontend** — this violates separation of concerns
+- Manually convert Streamlit messages to Pydantic AI `ModelMessage` — use backend service
 
 ## Architecture
 
@@ -63,21 +69,37 @@ src/
 ├── core/                           # PURE DOMAIN — zero framework deps
 │   ├── domain/
 │   │   ├── models.py               # Entities + value objects (dataclasses)
+│   │   │                          # - Reservation, ParkingSpace, User, TimeSlot
+│   │   │                          # - ConversationSession (NEW: chat memory)
 │   │   └── exceptions.py           # DomainError hierarchy
 │   ├── ports/
 │   │   ├── incoming/use_cases.py   # 5 Protocol interfaces (primary ports)
-│   │   └── outgoing/repositories.py # 3 Protocol interfaces (secondary ports)
-│   └── usecases/                   # 5 application services
+│   │   └── outgoing/repositories.py # 4 Protocol interfaces (secondary ports)
+│   │                               # - ReservationRepository, ParkingSpaceRepository
+│   │                               # - UserRepository, ConversationSessionRepository (NEW)
+│   └── usecases/                   # 6 application services
+│       ├── reserve_parking.py
+│       ├── check_availability.py
+│       ├── manage_reservations.py
+│       ├── admin_approval.py
+│       ├── manage_parking_spaces.py
+│       └── chat_conversation.py    # NEW: Backend conversation memory management
 ├── adapters/
 │   ├── incoming/
 │   │   ├── api/                    # FastAPI (routes.py, schemas.py)
-│   │   └── streamlit_app/          # Streamlit (app.py, chat_page.py, admin_page.py)
+│   │   └── streamlit_app/          # Streamlit (app.py, chat_page.py)
+│   │                               # Frontend: STATELESS - only stores backend_session_id
 │   └── outgoing/
 │       ├── llm/chatbot.py          # Pydantic AI agent + 10 tools
 │       └── persistence/            # In-memory + PostgreSQL repos, SQLModel models
+│           ├── in_memory.py        # InMemoryConversationSessionRepository (NEW)
+│           └── postgres.py         # PostgreSQL repositories
 └── config/
-    ├── settings.py                 # Pydantic Settings (all env vars)
-    └── dependencies.py             # DI factory functions (@lru_cache)
+    ├── settings.py                 # Pydantic Settings (all env vars + LOG_LEVEL, LOG_FILE)
+    ├── dependencies.py             # DI factory functions (@lru_cache)
+    │                               # - get_conversation_session_repository() (NEW)
+    │                               # - get_chat_conversation_service() (NEW)
+    └── logging.py                  # NEW: Centralized loguru configuration
 ```
 
 **Dependency flow**: adapters → ports → core (never reversed)
@@ -94,16 +116,19 @@ src/
 | Cancel + auth check | `src/core/usecases/manage_reservations.py` |
 | Human-in-the-loop approve/reject | `src/core/usecases/admin_approval.py` |
 | Parking space CRUD | `src/core/usecases/manage_parking_spaces.py` |
+| **Chat conversation memory (backend)** | `src/core/usecases/chat_conversation.py` |
 
 ### Where integration happens
 | What | Where |
 |------|-------|
 | All DI wiring + persistence switching | `src/config/dependencies.py` |
+| Centralized logging setup (loguru) | `src/config/logging.py` |
 | LLM agent creation + all 10 tools | `src/adapters/outgoing/llm/chatbot.py` |
 | REST API (13 endpoints + 1 chat) | `src/adapters/incoming/api/routes.py` |
 | Domain→DB model conversion | `src/adapters/outgoing/persistence/postgres.py` |
 | DB engine + table creation | `src/adapters/outgoing/persistence/database.py` |
 | Streamlit session state + event loop | `src/adapters/incoming/streamlit_app/app.py` |
+| **Backend conversation service integration** | `src/adapters/incoming/streamlit_app/chat_page.py` |
 
 ### Entry points
 | What | File |
@@ -133,6 +158,12 @@ class Reservation:              # reservation_id (UUID), user_id, space_id, time
                                 # created_at, updated_at, admin_notes
                                 # Methods: approve(), reject(), cancel() — raise InvalidReservationError
                                 # Property: total_cost (stub, returns 0.0)
+
+@dataclass
+class ConversationSession:      # NEW: session_id (UUID), user_id, user_role, message_history (list[dict]),
+                                # created_at, updated_at
+                                # Methods: add_messages(), clear_history()
+                                # Stores serialized Pydantic AI ModelMessage objects
 ```
 
 ## Domain Exceptions
@@ -160,13 +191,14 @@ DomainError (base)
 | `AdminApprovalUseCase` | `get_pending_reservations() -> list[Reservation]`, `approve_reservation(id, notes?) -> Reservation`, `reject_reservation(id, notes?) -> Reservation` |
 | `ManageParkingSpacesUseCase` | `add_space`, `update_space`, `remove_space`, `get_all_spaces` |
 
-### Outgoing — 3 Repository Protocols (`src/core/ports/outgoing/repositories.py`)
+### Outgoing — 4 Repository Protocols (`src/core/ports/outgoing/repositories.py`)
 
 | Protocol | Methods |
 |----------|---------|
 | `ReservationRepository` | `save`, `find_by_id`, `find_by_user_id(user_id, status?)`, `find_by_status`, `find_by_space_and_time(space_id, time_slot)`, `update`, `delete` |
 | `ParkingSpaceRepository` | `save`, `find_by_id`, `find_all`, `find_available`, `update`, `delete` |
 | `UserRepository` | `save`, `find_by_id`, `find_by_username` |
+| `ConversationSessionRepository` | **NEW:** `save`, `find_by_id`, `find_by_user_id`, `update`, `delete` |
 
 ## REST API (`/api/v1/`)
 
@@ -188,8 +220,9 @@ DomainError (base)
 
 **Schemas** (`schemas.py`): `TimeSlotRequest`, `CreateReservationRequest`, `AdminActionRequest`, `AvailabilityRequest`, `ParkingSpaceRequest`, `ChatMessage`, `ChatRequest` | `ReservationResponse`, `ParkingSpaceResponse`, `ChatResponse`
 
-## LLM Chatbot
+## LLM Chatbot & Conversation Memory
 
+### Chatbot Agent
 - **File**: `src/adapters/outgoing/llm/chatbot.py`
 - **Agent**: `Agent[ChatDeps, str]` via `create_parking_agent(model_name)`
 - **ChatDeps** (dataclass): `user_id`, `user_role`, + all 5 use case services
@@ -197,14 +230,33 @@ DomainError (base)
 - **10 tools**: `check_availability`, `reserve_space`, `get_my_reservations`, `cancel_reservation`, `list_all_spaces` | Admin: `get_pending_reservations`, `approve_reservation`, `reject_reservation`, `add_parking_space`, `remove_parking_space`
 - **Pattern**: each tool wraps a use case call, catches `DomainError`, returns formatted strings via `_format_space()` / `_format_reservation()`
 
+### Conversation Memory (Backend-Managed)
+- **File**: `src/core/usecases/chat_conversation.py`
+- **Service**: `ChatConversationService` — manages ALL conversation state on backend
+- **Architecture**: Frontend stores only `backend_session_id`, backend stores full Pydantic AI message history
+- **Key Methods**:
+  - `get_or_create_session(session_id, user_id, user_role) -> ConversationSession` — retrieve or create session
+  - `send_message(session_id, message, deps) -> tuple[str, UUID]` — process message with conversation context
+  - `clear_session_history(session_id)` — reset conversation
+  - `delete_session(session_id)` — remove session
+- **Storage**: `ConversationSession` domain model → `ConversationSessionRepository` → `InMemoryConversationSessionRepository` (in-memory for now, PostgreSQL TODO)
+- **Message Flow**:
+  1. Frontend sends message with `backend_session_id`
+  2. Backend retrieves session from repository
+  3. Deserializes Pydantic AI message history
+  4. Runs agent with full conversation context
+  5. Serializes and saves updated history
+  6. Returns response to frontend
+- **Separation of Concerns**: Frontend NEVER manages conversation state — all history on backend
+
 ## Persistence
 
 **Dual-backend** switched by `USE_POSTGRES` env var:
 
 | Backend | File | Classes |
 |---------|------|---------|
-| In-Memory (dev) | `persistence/in_memory.py` | `InMemoryReservationRepository`, `InMemoryParkingSpaceRepository`, `InMemoryUserRepository` |
-| PostgreSQL (prod) | `persistence/postgres.py` | `PostgresReservationRepository`, `PostgresParkingSpaceRepository`, `PostgresUserRepository` |
+| In-Memory (dev) | `persistence/in_memory.py` | `InMemoryReservationRepository`, `InMemoryParkingSpaceRepository`, `InMemoryUserRepository`, `InMemoryConversationSessionRepository` |
+| PostgreSQL (prod) | `persistence/postgres.py` | `PostgresReservationRepository`, `PostgresParkingSpaceRepository`, `PostgresUserRepository` (ConversationSession: TODO) |
 
 **DB models** (`persistence/models.py`):
 - `ParkingSpaceDB` → table `parking_spaces` (PK: `space_id` str)
@@ -219,17 +271,19 @@ All factories cached with `@lru_cache`. Import and call — never instantiate di
 
 ```python
 get_settings() -> Settings
-get_reservation_repository()       # → InMemory or Postgres based on USE_POSTGRES
-get_parking_space_repository()     # → InMemory or Postgres (seeds sample data)
-get_user_repository()              # → InMemory or Postgres
-get_reserve_parking_usecase()      # → ReserveParkingService
-get_check_availability_usecase()   # → CheckAvailabilityService
-get_manage_reservations_usecase()  # → ManageReservationsService
-get_admin_approval_usecase()       # → AdminApprovalService
-get_manage_parking_spaces_usecase() # → ManageParkingSpacesService
-get_chatbot_model_name()           # → "ollama:<model>" or "openrouter:<model>"
-get_parking_agent()                # → Agent[ChatDeps, str]
-get_chat_deps(user_id, user_role)  # → ChatDeps (not cached — per-request)
+get_reservation_repository()          # → InMemory or Postgres based on USE_POSTGRES
+get_parking_space_repository()        # → InMemory or Postgres (seeds sample data)
+get_user_repository()                 # → InMemory or Postgres
+get_conversation_session_repository() # NEW: → InMemory (PostgreSQL TODO)
+get_reserve_parking_usecase()         # → ReserveParkingService
+get_check_availability_usecase()      # → CheckAvailabilityService
+get_manage_reservations_usecase()     # → ManageReservationsService
+get_admin_approval_usecase()          # → AdminApprovalService
+get_manage_parking_spaces_usecase()   # → ManageParkingSpacesService
+get_chat_conversation_service()       # NEW: → ChatConversationService (manages backend conversation state)
+get_chatbot_model_name()              # → "ollama:<model>" or "openrouter:<model>"
+get_parking_agent()                   # → Agent[ChatDeps, str]
+get_chat_deps(user_id, user_role)     # → ChatDeps (not cached — per-request)
 ```
 
 ## Configuration

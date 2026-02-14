@@ -337,7 +337,12 @@ def _render_message_content(content: str) -> None:
 
 
 def render_chat() -> None:
-    """Render the chat interface with welcome message, history, and input."""
+    """Render the chat interface with welcome message, history, and input.
+
+    This function implements a continuous conversation loop where users can
+    send multiple messages in succession. The conversation history is maintained
+    using Pydantic AI's native message memory system.
+    """
     # Show welcome if no messages yet
     if not st.session_state.messages:
         _render_welcome()
@@ -352,11 +357,12 @@ def render_chat() -> None:
     if prompt:
         st.session_state.pending_prompt = None
         _process_user_message(prompt)
-        return
+        st.rerun()
 
-    # Chat input
+    # Chat input - allows continuous messaging
     if user_input := st.chat_input("Ask about parking reservations..."):
         _process_user_message(user_input)
+        st.rerun()
 
 
 def _process_user_message(prompt: str) -> None:
@@ -380,56 +386,56 @@ def _process_user_message(prompt: str) -> None:
 def _get_chatbot_response(user_message: str) -> str:
     """Send a message to the chatbot and get a response.
 
+    Uses the backend ChatConversationService to manage conversation state.
+    The backend maintains the full conversation history using Pydantic AI's
+    native message memory, ensuring proper separation of concerns.
+
     Args:
         user_message: The user's message text
 
     Returns:
         The chatbot's response text (may contain widget JSON)
     """
+    from uuid import UUID
+
     user_id = UUID(st.session_state.user_id)
     user_role = UserRole(st.session_state.user_role)
 
+    # Get or create session on backend
+    chat_service = dependencies.get_chat_conversation_service()
+    chat_deps = dependencies.get_chat_deps(user_id, user_role)
+
+    # Get session_id from session state or create new session
+    if (
+        "backend_session_id" not in st.session_state
+        or st.session_state.backend_session_id is None
+    ):
+        logger.debug(
+            "Streamlit: creating new backend session for user={}, role={}",
+            user_id,
+            user_role.value,
+        )
+        session = chat_service.get_or_create_session(None, user_id, user_role)
+        st.session_state.backend_session_id = str(session.session_id)
+        logger.info("Streamlit: new backend session_id={}", session.session_id)
+
+    session_id = UUID(st.session_state.backend_session_id)
+
     logger.debug(
-        "Streamlit → LLM: user={}, role={}, message='{}'",
+        "Streamlit → Backend: session={}, user={}, message='{}'",
+        session_id,
         user_id,
-        user_role.value,
         user_message[:100],
     )
 
-    agent = dependencies.get_parking_agent()
-    chat_deps = dependencies.get_chat_deps(user_id, user_role)
-
-    # Build message history for context (excluding the current message)
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        TextPart,
-        UserPromptPart,
-    )
-
-    message_history: list[ModelMessage] = []
-    for msg in st.session_state.messages[:-1]:  # Exclude current user message
-        if msg["role"] == "user":
-            message_history.append(
-                ModelRequest(parts=[UserPromptPart(content=msg["content"])])
-            )
-        elif msg["role"] == "assistant":
-            message_history.append(
-                ModelResponse(parts=[TextPart(content=msg["content"])])
-            )
-
     try:
         loop = st.session_state.event_loop
-        result = loop.run_until_complete(
-            agent.run(
-                user_message,
-                deps=chat_deps,
-                message_history=message_history or None,
-            )
+        response, _ = loop.run_until_complete(
+            chat_service.send_message(session_id, user_message, chat_deps)
         )
-        logger.debug("Streamlit ← LLM: response length={}", len(str(result.output)))
-        return str(result.output)
+
+        logger.debug("Streamlit ← Backend: response length={}", len(response))
+        return response
     except Exception as e:
         logger.exception("Streamlit: chatbot error: {}", e)
         return f"Sorry, I encountered an error: {e}"

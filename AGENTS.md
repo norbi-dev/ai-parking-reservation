@@ -11,12 +11,13 @@ Essential information for AI coding agents working in this repository.
 
 ## Project Overview
 
-**Parking Reservation Chatbot** - Python app using Hexagonal Architecture (Ports & Adapters) for conversational parking space reservations with LLM-powered chatbot, human-in-the-loop approval, and vector-based static data retrieval.
+**Parking Reservation Chatbot** - Python app using Hexagonal Architecture (Ports & Adapters) for conversational parking space reservations with LLM-powered chatbot, human-in-the-loop approval, and backend-managed conversation memory.
 
 - **Architecture**: Hexagonal/Clean Architecture with DDD principles
 - **Language**: Python 3.13
-- **Stack**: Pydantic AI, Pydantic Graph for Graph based worklow, Streamlit, FastAPI, SQLModel, PostgreSQL, pgvector
+- **Stack**: Pydantic AI, Streamlit, FastAPI, SQLModel, PostgreSQL, pgvector
 - **Package Manager**: `uv`
+- **State Management**: Backend-managed conversation sessions (separation of concerns)
 
 ## Quick Commands
 
@@ -49,13 +50,28 @@ mypy src/                                 # Type checking
 src/
 ├── core/                     # BUSINESS LOGIC (framework-agnostic)
 │   ├── domain/              # Models, value objects, exceptions
+│   │   └── models.py        # Domain entities: Reservation, ParkingSpace, User, ConversationSession
 │   ├── ports/incoming/      # Use case interfaces (Primary Ports)
 │   ├── ports/outgoing/      # Infrastructure interfaces (Secondary Ports)
+│   │   └── repositories.py  # Repository protocols: ReservationRepository, ConversationSessionRepository, etc.
 │   └── usecases/            # Application orchestration
+│       ├── reserve_parking.py
+│       ├── check_availability.py
+│       ├── manage_reservations.py
+│       ├── admin_approval.py
+│       ├── manage_parking_spaces.py
+│       └── chat_conversation.py  # Backend conversation memory management
 ├── adapters/
 │   ├── incoming/            # UI/API (Streamlit, FastAPI)
+│   │   ├── streamlit_app/   # Frontend - pure presentation layer
+│   │   └── api/             # REST API endpoints
 │   └── outgoing/            # Infrastructure (LLM, DB, i18n)
+│       ├── llm/             # Pydantic AI chatbot agent
+│       └── persistence/     # Repository implementations
+│           ├── in_memory.py # In-memory repos (dev/test)
+│           └── postgres.py  # PostgreSQL repos (production)
 └── config/                  # Settings & dependency injection
+    └── dependencies.py      # Factory functions for all services
 ```
 
 **Key Principles:**
@@ -63,6 +79,7 @@ src/
 2. Dependencies point inward (adapters → ports → core)
 3. Use `Protocol` classes for interfaces, not ABCs
 4. Simple DI via factory functions in `src/config/dependencies.py`
+5. **Backend manages ALL conversation state** - Frontend is stateless
 
 ## Code Style
 
@@ -71,10 +88,10 @@ src/
 import os
 from typing import Protocol, Any
 
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelMessage
 
-from src.core.domain.models import Reservation
+from src.core.domain.models import Reservation, ConversationSession
 ```
 
 ### Type Hints (modern Python 3.10+)
@@ -207,9 +224,53 @@ ADMIN_APPROVAL_REQUIRED=true           # Enable human-in-the-loop
 
 **Add Adapter:** Create in `adapters/` → Implement port Protocol → Add factory function if needed → Test
 
-**Add LangGraph Node:** Define node function → Add to StateGraph → Wire state transitions → Test with mock state
+**Add Conversation Memory:** Backend manages all state via `ChatConversationService` → Frontend only stores `backend_session_id` → Never store conversation history in frontend
 
-**Add Static Data:** Update vector DB → Test retrieval in chatbot context → Verify RAG pipeline integration
+## Conversation Memory Architecture
+
+### **CRITICAL: Backend-Managed State**
+
+The system follows strict separation of concerns for conversation memory:
+
+**✅ Backend Responsibilities:**
+- `ConversationSession` domain model stores message history
+- `ConversationSessionRepository` persists sessions
+- `ChatConversationService` manages session lifecycle
+- All Pydantic AI message history stored and managed server-side
+
+**✅ Frontend Responsibilities:**
+- Display messages for UI rendering only
+- Send user input to backend
+- Store `backend_session_id` reference only
+- **NEVER** manage conversation history
+
+**Example - Proper Backend Usage:**
+```python
+# In use case or adapter
+chat_service = dependencies.get_chat_conversation_service()
+chat_deps = dependencies.get_chat_deps(user_id, user_role)
+
+# Backend manages all state
+session = chat_service.get_or_create_session(session_id, user_id, user_role)
+response, _ = await chat_service.send_message(session.session_id, message, chat_deps)
+```
+
+**Example - Frontend (Streamlit):**
+```python
+# Streamlit only stores session reference
+if "backend_session_id" not in st.session_state:
+    st.session_state.backend_session_id = None  # Created on first message
+
+# Send to backend - backend handles all memory
+response = _get_chatbot_response(user_message)
+```
+
+**🚫 NEVER DO THIS:**
+```python
+# ❌ BAD: Don't manage conversation history in frontend
+st.session_state.conversation_history = []  # WRONG!
+st.session_state.messages = result.all_messages()  # WRONG!
+```
 
 ## Dependency Injection (Simple!)
 

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 from uuid import UUID, uuid4
 
 from src.core.domain.exceptions import InvalidReservationError
@@ -166,3 +167,42 @@ class Reservation:
         externally. Returns 0.0 as a placeholder.
         """
         return 0.0
+
+
+@dataclass
+class ConversationSession:
+    """Represents a chat conversation session with its message history.
+
+    This domain model encapsulates the state of a conversation between
+    a user and the chatbot. The message history is stored as JSON bytes
+    using Pydantic AI's native serialization format.
+
+    Attributes:
+        session_id: Unique identifier for the conversation session
+        user_id: User who owns this conversation
+        user_role: Role of the user (client or admin)
+        message_history: Serialized Pydantic AI message history (JSON bytes)
+        created_at: When the session was created
+        updated_at: When the session was last updated
+    """
+
+    user_id: UUID
+    user_role: UserRole
+    session_id: UUID = field(default_factory=uuid4)
+    message_history: bytes = field(default_factory=bytes)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    def add_messages(self, messages: bytes) -> None:
+        """Add messages to the conversation history.
+
+        Args:
+            messages: Serialized Pydantic AI ModelMessage objects (JSON bytes)
+        """
+        self.message_history = messages
+        self.updated_at = datetime.now()
+
+    def clear_history(self) -> None:
+        """Clear all messages from the conversation history."""
+        self.message_history = bytes()
+        self.updated_at = datetime.now()

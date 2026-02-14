@@ -3,10 +3,8 @@
 Provides engine creation and session management for SQLModel-based repositories.
 """
 
-from collections.abc import Generator
-
 from sqlalchemy import Engine
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import SQLModel, create_engine
 
 
 def create_db_engine(database_url: str) -> Engine:
@@ -37,17 +35,3 @@ def create_tables(database_url: str) -> None:
 
     engine = create_db_engine(database_url)
     SQLModel.metadata.create_all(engine)
-
-
-def get_session(database_url: str) -> Generator[Session]:
-    """Create a database session (generator for dependency injection).
-
-    Args:
-        database_url: PostgreSQL connection string
-
-    Yields:
-        SQLModel Session
-    """
-    engine = create_db_engine(database_url)
-    with Session(engine) as session:
-        yield session

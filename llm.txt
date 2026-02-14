@@ -1,0 +1,313 @@
+# ai-parking-reservation
+
+> LLM-powered chatbot for managing parking space reservations via natural language, built on Hexagonal Architecture with human-in-the-loop admin approval.
+
+## Tech Stack
+
+| Component | Version/Library |
+|-----------|-----------------|
+| Python | >=3.13 (runtime 3.13) |
+| Package manager | uv |
+| LLM framework | pydantic-ai >=0.1.0 |
+| Web API | FastAPI >=0.115.0, uvicorn >=0.30.0 |
+| Chat UI | Streamlit >=1.40.0 |
+| Validation | Pydantic >=2.10.0, pydantic-settings >=2.6.0 |
+| ORM | SQLModel >=0.0.22 (SQLAlchemy under the hood) |
+| Database | PostgreSQL 17 (pgvector image), psycopg2-binary >=2.9.10 |
+| Lint/Format | ruff >=0.8.0 (rules: E,F,I,N,W,UP), line-length 88 |
+| Type check | mypy >=1.13.0 (strict mode) |
+| Tests | pytest >=8.3.0, pytest-asyncio >=0.24.0, httpx >=0.28.0 |
+| Containers | podman-compose (docker-compose compatible) |
+
+## Quick Commands
+
+```bash
+uv sync                                    # Install deps
+uv run pytest tests/unit -v               # 61 unit tests, no external deps
+uv run pytest -v -m "not integration"     # Skip integration tests
+ruff check --fix . && ruff format .        # ALWAYS run after code changes
+mypy src/                                  # Type check
+uv run streamlit run main.py              # Streamlit UI on :8501
+uv run python main_api.py                 # FastAPI on :8000
+podman-compose up -d                      # All services (postgres, api, streamlit)
+```
+
+## The Rules
+
+### ALWAYS
+- Keep `src/core/` **framework-free** — zero imports of FastAPI, SQLModel, Streamlit, pydantic-ai
+- Use `typing.Protocol` for interfaces, never ABC
+- Use `@dataclass` for domain models, `BaseModel` for API schemas, `SQLModel` for DB models
+- Raise `DomainError` subclasses (never raw `ValueError`/`Exception`) from domain logic
+- Catch `DomainError` in adapters, map to HTTP status via `_handle_domain_error()` in routes
+- Import order: stdlib → third-party → local (enforced by ruff `I` rule)
+- Type hints: modern syntax (`list[]`, `X | None`, never `List[]` or `Optional[]`)
+- Google-style docstrings with Args/Returns/Raises
+- Run `ruff check --fix . && ruff format .` after every implementation
+- Get use cases via `dependencies.get_*_usecase()` — never instantiate services directly in adapters
+- Admin chatbot tools must guard with `if ctx.deps.user_role != UserRole.ADMIN: return "Access denied..."`
+
+### NEVER
+- Import from `adapters/` or `config/` inside `src/core/`
+- Use `Optional[]`, `List[]`, `Dict[]` — use `X | None`, `list[]`, `dict[]`
+- Create classes that inherit from ABC
+- Use `@lru_cache` on functions that take mutable args
+- Put business logic in adapters — push it into use case services
+- Commit `.env` files (use `.env.example` as template)
+- Skip the `from e` in `raise HTTPException(...) from e`
+
+## Architecture
+
+```
+src/
+├── core/                           # PURE DOMAIN — zero framework deps
+│   ├── domain/
+│   │   ├── models.py               # Entities + value objects (dataclasses)
+│   │   └── exceptions.py           # DomainError hierarchy
+│   ├── ports/
+│   │   ├── incoming/use_cases.py   # 5 Protocol interfaces (primary ports)
+│   │   └── outgoing/repositories.py # 3 Protocol interfaces (secondary ports)
+│   └── usecases/                   # 5 application services
+├── adapters/
+│   ├── incoming/
+│   │   ├── api/                    # FastAPI (routes.py, schemas.py)
+│   │   └── streamlit_app/          # Streamlit (app.py, chat_page.py, admin_page.py)
+│   └── outgoing/
+│       ├── llm/chatbot.py          # Pydantic AI agent + 10 tools
+│       └── persistence/            # In-memory + PostgreSQL repos, SQLModel models
+└── config/
+    ├── settings.py                 # Pydantic Settings (all env vars)
+    └── dependencies.py             # DI factory functions (@lru_cache)
+```
+
+**Dependency flow**: adapters → ports → core (never reversed)
+
+## Critical Paths
+
+### Where business logic lives
+| What | Where |
+|------|-------|
+| Domain entities & enums | `src/core/domain/models.py` |
+| Domain exceptions | `src/core/domain/exceptions.py` |
+| Reservation workflow (create, validate, conflict check) | `src/core/usecases/reserve_parking.py` |
+| Availability filtering | `src/core/usecases/check_availability.py` |
+| Cancel + auth check | `src/core/usecases/manage_reservations.py` |
+| Human-in-the-loop approve/reject | `src/core/usecases/admin_approval.py` |
+| Parking space CRUD | `src/core/usecases/manage_parking_spaces.py` |
+
+### Where integration happens
+| What | Where |
+|------|-------|
+| All DI wiring + persistence switching | `src/config/dependencies.py` |
+| LLM agent creation + all 10 tools | `src/adapters/outgoing/llm/chatbot.py` |
+| REST API (13 endpoints + 1 chat) | `src/adapters/incoming/api/routes.py` |
+| Domain→DB model conversion | `src/adapters/outgoing/persistence/postgres.py` |
+| DB engine + table creation | `src/adapters/outgoing/persistence/database.py` |
+| Streamlit session state + event loop | `src/adapters/incoming/streamlit_app/app.py` |
+
+### Entry points
+| What | File |
+|------|------|
+| Streamlit app | `main.py` → calls `run_app()` |
+| FastAPI app | `main_api.py` → `create_app()` mounts router at `/api/v1` |
+
+## Domain Models
+
+```python
+# src/core/domain/models.py
+class ReservationStatus(Enum):  # PENDING, CONFIRMED, REJECTED, CANCELLED
+class UserRole(Enum):           # CLIENT, ADMIN
+
+@dataclass(frozen=True)
+class TimeSlot:                 # start_time, end_time; validates end > start
+                                # Property: duration_hours
+
+@dataclass
+class ParkingSpace:             # space_id (str PK), location, is_available, hourly_rate, space_type
+
+@dataclass
+class User:                     # user_id (UUID), username, email, role (UserRole), full_name
+
+@dataclass
+class Reservation:              # reservation_id (UUID), user_id, space_id, time_slot, status,
+                                # created_at, updated_at, admin_notes
+                                # Methods: approve(), reject(), cancel() — raise InvalidReservationError
+                                # Property: total_cost (stub, returns 0.0)
+```
+
+## Domain Exceptions
+
+```
+DomainError (base)
+├── SpaceNotAvailableError       → HTTP 409
+├── ReservationNotFoundError     → HTTP 404
+├── SpaceNotFoundError           → HTTP 404
+├── UserNotFoundError            → (not mapped, falls to 400)
+├── InvalidReservationError      → HTTP 409 (bad state transitions)
+├── ReservationConflictError     → HTTP 409
+└── AuthorizationError           → HTTP 403
+```
+
+## Ports
+
+### Incoming — 5 Use Case Protocols (`src/core/ports/incoming/use_cases.py`)
+
+| Protocol | Methods |
+|----------|---------|
+| `ReserveParkingUseCase` | `execute(user_id: UUID, space_id: str, time_slot: TimeSlot) -> Reservation` |
+| `CheckAvailabilityUseCase` | `execute(time_slot) -> list[ParkingSpace]`, `is_space_available(space_id, time_slot) -> bool` |
+| `ManageReservationsUseCase` | `get_user_reservations(user_id, status?) -> list[Reservation]`, `cancel_reservation(id, user_id) -> Reservation`, `get_reservation(id) -> Reservation` |
+| `AdminApprovalUseCase` | `get_pending_reservations() -> list[Reservation]`, `approve_reservation(id, notes?) -> Reservation`, `reject_reservation(id, notes?) -> Reservation` |
+| `ManageParkingSpacesUseCase` | `add_space`, `update_space`, `remove_space`, `get_all_spaces` |
+
+### Outgoing — 3 Repository Protocols (`src/core/ports/outgoing/repositories.py`)
+
+| Protocol | Methods |
+|----------|---------|
+| `ReservationRepository` | `save`, `find_by_id`, `find_by_user_id(user_id, status?)`, `find_by_status`, `find_by_space_and_time(space_id, time_slot)`, `update`, `delete` |
+| `ParkingSpaceRepository` | `save`, `find_by_id`, `find_all`, `find_available`, `update`, `delete` |
+| `UserRepository` | `save`, `find_by_id`, `find_by_username` |
+
+## REST API (`/api/v1/`)
+
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
+| POST | `/reservations` | 201 | Create reservation |
+| GET | `/reservations/{id}` | 200 | Get by ID |
+| GET | `/reservations/user/{user_id}` | 200 | Get user's reservations |
+| POST | `/reservations/{id}/cancel` | 200 | Cancel reservation |
+| POST | `/availability` | 200 | Check available spaces for time slot |
+| GET | `/admin/reservations/pending` | 200 | List pending reservations |
+| POST | `/admin/reservations/{id}/approve` | 200 | Approve reservation |
+| POST | `/admin/reservations/{id}/reject` | 200 | Reject reservation |
+| GET | `/admin/spaces` | 200 | List all spaces |
+| POST | `/admin/spaces` | 201 | Add space |
+| PUT | `/admin/spaces/{id}` | 200 | Update space |
+| DELETE | `/admin/spaces/{id}` | 204 | Remove space |
+| POST | `/chat` | 200 | Chat with LLM agent |
+
+**Schemas** (`schemas.py`): `TimeSlotRequest`, `CreateReservationRequest`, `AdminActionRequest`, `AvailabilityRequest`, `ParkingSpaceRequest`, `ChatMessage`, `ChatRequest` | `ReservationResponse`, `ParkingSpaceResponse`, `ChatResponse`
+
+## LLM Chatbot
+
+- **File**: `src/adapters/outgoing/llm/chatbot.py`
+- **Agent**: `Agent[ChatDeps, str]` via `create_parking_agent(model_name)`
+- **ChatDeps** (dataclass): `user_id`, `user_role`, + all 5 use case services
+- **System prompt**: static rules + dynamic `@agent.system_prompt` injecting user context + current time
+- **10 tools**: `check_availability`, `reserve_space`, `get_my_reservations`, `cancel_reservation`, `list_all_spaces` | Admin: `get_pending_reservations`, `approve_reservation`, `reject_reservation`, `add_parking_space`, `remove_parking_space`
+- **Pattern**: each tool wraps a use case call, catches `DomainError`, returns formatted strings via `_format_space()` / `_format_reservation()`
+
+## Persistence
+
+**Dual-backend** switched by `USE_POSTGRES` env var:
+
+| Backend | File | Classes |
+|---------|------|---------|
+| In-Memory (dev) | `persistence/in_memory.py` | `InMemoryReservationRepository`, `InMemoryParkingSpaceRepository`, `InMemoryUserRepository` |
+| PostgreSQL (prod) | `persistence/postgres.py` | `PostgresReservationRepository`, `PostgresParkingSpaceRepository`, `PostgresUserRepository` |
+
+**DB models** (`persistence/models.py`):
+- `ParkingSpaceDB` → table `parking_spaces` (PK: `space_id` str)
+- `UserDB` → table `users` (PK: `user_id` UUID, indexed: `username`)
+- `ReservationDB` → table `reservations` (PK: `reservation_id` UUID, indexed: `user_id`, `space_id`)
+
+**Database** (`persistence/database.py`): `create_db_engine(url)`, `create_tables(url)`
+
+## DI (`src/config/dependencies.py`)
+
+All factories cached with `@lru_cache`. Import and call — never instantiate directly:
+
+```python
+get_settings() -> Settings
+get_reservation_repository()       # → InMemory or Postgres based on USE_POSTGRES
+get_parking_space_repository()     # → InMemory or Postgres (seeds sample data)
+get_user_repository()              # → InMemory or Postgres
+get_reserve_parking_usecase()      # → ReserveParkingService
+get_check_availability_usecase()   # → CheckAvailabilityService
+get_manage_reservations_usecase()  # → ManageReservationsService
+get_admin_approval_usecase()       # → AdminApprovalService
+get_manage_parking_spaces_usecase() # → ManageParkingSpacesService
+get_chatbot_model_name()           # → "ollama:<model>" or "openrouter:<model>"
+get_parking_agent()                # → Agent[ChatDeps, str]
+get_chat_deps(user_id, user_role)  # → ChatDeps (not cached — per-request)
+```
+
+## Configuration
+
+```python
+# src/config/settings.py — all from env vars, .env file supported
+local_mode: bool = True                    # True=Ollama, False=OpenRouter
+ollama_model: str = "gpt-oss:20b"
+ollama_base_url: str = "http://localhost:11434/v1"  # MUST include /v1 suffix!
+model_name: str = "google/gemini-flash-1.5"        # OpenRouter model
+database_url: str = "postgresql://parkinguser:parkingpass@localhost:5432/parkingreservation"
+use_postgres: bool = False                 # False=in-memory, True=PostgreSQL
+max_reservation_days: int = 30             # NOT enforced yet
+admin_approval_required: bool = True       # NOT enforced yet (always on)
+api_host: str = "0.0.0.0"
+api_port: int = 8000
+```
+
+## Docker Services
+
+| Service | Image | Port | Notes |
+|---------|-------|------|-------|
+| postgres | pgvector/pgvector:pg17 | 5432 | Seeds via `db/init.sql`, healthcheck |
+| api | Dockerfile.api | 8000 | `USE_POSTGRES=true`, depends on postgres |
+| streamlit | Dockerfile.streamlit | 8501 | `USE_POSTGRES=true`, depends on postgres |
+
+**Seed data** (`db/init.sql`): 10 spaces (A1-E2), 3 users (alice, bob, admin), 5 sample reservations
+
+## Tests
+
+| Type | File | Count |
+|------|------|-------|
+| Unit | `tests/unit/test_models.py` | 16 |
+| Unit | `tests/unit/test_repositories.py` | 17 |
+| Unit | `tests/unit/test_reservation.py` | 28 |
+| Integration | `tests/integration/test_postgres_repositories.py` | 21 |
+| **Total** | | **61 unit + 21 integration** |
+
+**Patterns**: Arrange-Act-Assert, `@pytest.mark.unit`/`@pytest.mark.integration`, `asyncio_mode = "auto"`, integration uses podman-compose postgres
+
+## CI/CD
+
+`.github/workflows/ci.yml` — Python 3.13, uv:
+- **lint**: `ruff check` + `ruff format --check`
+- **test**: `pytest tests/unit -v -m "not integration"`
+
+## Implementation Recipes
+
+**New use case**: Protocol in `ports/incoming/use_cases.py` → Service in `usecases/` → Factory in `dependencies.py` → Wire in adapters
+
+**New repository**: Protocol in `ports/outgoing/repositories.py` → SQLModel table in `persistence/models.py` → InMemory + Postgres impls → Factory in `dependencies.py` → DDL in `db/init.sql`
+
+**New chatbot tool**: `@agent.tool` in `chatbot.py` inside `create_parking_agent()` → first arg is `RunContext[ChatDeps]` → admin tools guard on `ctx.deps.user_role`
+
+**New API endpoint**: Schema in `schemas.py` → Route in `routes.py` with tags + status codes → DomainError catch → `dependencies.get_*_usecase()`
+
+## Gotchas & Known Limitations
+
+- **OLLAMA_BASE_URL must end with `/v1`** — pydantic-ai requires OpenAI-compatible endpoint format
+- **Streamlit async**: uses `asyncio.new_event_loop()` stored in `st.session_state.event_loop` to run async pydantic-ai agent
+- **`_get_db_session()` is `@lru_cache`** — returns a single session, not thread-safe for concurrent requests
+- **`Reservation.__new__()` hack** in `postgres.py` — bypasses `__init__` to reconstruct domain objects from DB without triggering TimeSlot validation twice
+- **`max_reservation_days` / `admin_approval_required` settings exist but are NOT enforced** in any use case
+- **`Reservation.total_cost` always returns `0.0`** — placeholder, never wired to space hourly_rate
+- **`UserRepository` is wired** in DI but never called by any use case or adapter
+- **No authentication** — user_id is passed explicitly (demo/prototype)
+- **No logging** — zero observability across the entire codebase
+- **No CORS middleware**, no `/health` endpoint
+- **No API/chatbot/Streamlit tests** — only domain + repository tests exist
+
+## Do Not Touch
+
+These are stale references or removed items — do NOT import or recreate:
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `src/adapters/incoming/streamlit_app/client_page.py` | **Deleted** | Was a 6-line stub, never imported. Removed. |
+| `ErrorResponse` in `schemas.py` | **Removed** | Was defined but never used by any endpoint. |
+| `get_session()` in `database.py` | **Removed** | Dead code. DI uses `_get_db_session()` in `dependencies.py`. |
+| `docs/` directory | **Never existed** | Referenced in `AGENTS.md` but never created. |
+| `.opencode/skills/fix-pre-commit/` | **Not yet created** | Referenced in `AGENTS.md` but skill file doesn't exist yet. |

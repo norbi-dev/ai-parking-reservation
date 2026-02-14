@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
+from src.core.domain.exceptions import InvalidReservationError
+
 
 class ReservationStatus(Enum):
     """Status of a parking reservation."""
@@ -119,11 +121,11 @@ class Reservation:
             admin_notes: Optional notes from the administrator
 
         Raises:
-            ValueError: If the reservation is not in pending status
+            InvalidReservationError: If the reservation is not in pending status
         """
         if self.status != ReservationStatus.PENDING:
             msg = f"Cannot approve reservation with status {self.status.value}"
-            raise ValueError(msg)
+            raise InvalidReservationError(msg)
         self.status = ReservationStatus.CONFIRMED
         self.admin_notes = admin_notes
         self.updated_at = datetime.now()
@@ -135,11 +137,11 @@ class Reservation:
             admin_notes: Optional notes from the administrator
 
         Raises:
-            ValueError: If the reservation is not in pending status
+            InvalidReservationError: If the reservation is not in pending status
         """
         if self.status != ReservationStatus.PENDING:
             msg = f"Cannot reject reservation with status {self.status.value}"
-            raise ValueError(msg)
+            raise InvalidReservationError(msg)
         self.status = ReservationStatus.REJECTED
         self.admin_notes = admin_notes
         self.updated_at = datetime.now()
@@ -148,11 +150,11 @@ class Reservation:
         """Cancel the reservation.
 
         Raises:
-            ValueError: If the reservation is already rejected or cancelled
+            InvalidReservationError: If the reservation is already rejected or cancelled
         """
         if self.status in (ReservationStatus.REJECTED, ReservationStatus.CANCELLED):
             msg = f"Cannot cancel reservation with status {self.status.value}"
-            raise ValueError(msg)
+            raise InvalidReservationError(msg)
         self.status = ReservationStatus.CANCELLED
         self.updated_at = datetime.now()
 

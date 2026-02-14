@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.core.domain.exceptions import InvalidReservationError
 from src.core.domain.models import (
     ParkingSpace,
     Reservation,
@@ -155,10 +156,10 @@ class TestReservation:
         assert reservation.admin_notes == "Looks good"
 
     def test_approve_non_pending_raises(self) -> None:
-        """Test that approving a non-pending reservation raises ValueError."""
+        """Test that approving non-pending reservation raises error."""
         reservation = self._make_reservation(ReservationStatus.CONFIRMED)
 
-        with pytest.raises(ValueError, match="Cannot approve"):
+        with pytest.raises(InvalidReservationError, match="Cannot approve"):
             reservation.approve()
 
     def test_reject_pending_reservation(self) -> None:
@@ -170,10 +171,10 @@ class TestReservation:
         assert reservation.admin_notes == "Space under maintenance"
 
     def test_reject_non_pending_raises(self) -> None:
-        """Test that rejecting a non-pending reservation raises ValueError."""
+        """Test that rejecting non-pending reservation raises error."""
         reservation = self._make_reservation(ReservationStatus.CONFIRMED)
 
-        with pytest.raises(ValueError, match="Cannot reject"):
+        with pytest.raises(InvalidReservationError, match="Cannot reject"):
             reservation.reject()
 
     def test_cancel_pending_reservation(self) -> None:
@@ -191,15 +192,15 @@ class TestReservation:
         assert reservation.status == ReservationStatus.CANCELLED
 
     def test_cancel_rejected_raises(self) -> None:
-        """Test that cancelling a rejected reservation raises ValueError."""
+        """Test that cancelling a rejected reservation raises error."""
         reservation = self._make_reservation(ReservationStatus.REJECTED)
 
-        with pytest.raises(ValueError, match="Cannot cancel"):
+        with pytest.raises(InvalidReservationError, match="Cannot cancel"):
             reservation.cancel()
 
     def test_cancel_already_cancelled_raises(self) -> None:
-        """Test that cancelling an already cancelled reservation raises ValueError."""
+        """Test that cancelling already cancelled reservation raises error."""
         reservation = self._make_reservation(ReservationStatus.CANCELLED)
 
-        with pytest.raises(ValueError, match="Cannot cancel"):
+        with pytest.raises(InvalidReservationError, match="Cannot cancel"):
             reservation.cancel()

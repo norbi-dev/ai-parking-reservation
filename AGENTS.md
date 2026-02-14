@@ -2,9 +2,12 @@
 
 Essential information for AI coding agents working in this repository.
 
+> **📖 Project Context:** See `llm.txt` in the project root for a comprehensive reference of all models, APIs, architecture, and file structure.
+>
 > **💡 Agent Skills Available:** Check `.opencode/skills/` for step-by-step procedures for common tasks.
 > - **fix-pre-commit** - Fix code quality issues before committing (run after implementations)
-> - Load skills using: `skill({ name: "fix-pre-commit" })`
+> - **update-llm-txt** - Update `llm.txt` after implementing changes (run after any structural/API/model changes)
+> - Load skills using: `skill({ name: "fix-pre-commit" })` or `skill({ name: "update-llm-txt" })`
 
 ## Project Overview
 

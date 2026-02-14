@@ -75,13 +75,6 @@ class AvailabilityRequest(BaseModel):
     time_slot: TimeSlotRequest = Field(description="Time period to check")
 
 
-class ErrorResponse(BaseModel):
-    """Response model for error messages."""
-
-    detail: str
-    error_type: str
-
-
 class ChatMessage(BaseModel):
     """A single message in a chat conversation."""
 

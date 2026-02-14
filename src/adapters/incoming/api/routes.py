@@ -18,6 +18,7 @@ from src.config import dependencies
 from src.core.domain.exceptions import (
     AuthorizationError,
     DomainError,
+    InvalidReservationError,
     ReservationConflictError,
     ReservationNotFoundError,
     SpaceNotAvailableError,
@@ -82,6 +83,7 @@ def _handle_domain_error(error: DomainError) -> HTTPException:
         ReservationNotFoundError: status.HTTP_404_NOT_FOUND,
         SpaceNotAvailableError: status.HTTP_409_CONFLICT,
         ReservationConflictError: status.HTTP_409_CONFLICT,
+        InvalidReservationError: status.HTTP_409_CONFLICT,
         AuthorizationError: status.HTTP_403_FORBIDDEN,
     }
     http_status = status_map.get(type(error), status.HTTP_400_BAD_REQUEST)

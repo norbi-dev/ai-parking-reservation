@@ -22,7 +22,7 @@ class UserNotFoundError(DomainError):
 
 
 class InvalidReservationError(DomainError):
-    """Raised when reservation data is invalid."""
+    """Raised when a reservation state transition is invalid."""
 
 
 class ReservationConflictError(DomainError):

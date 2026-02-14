@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
 from uuid import UUID, uuid4
 
 from src.core.domain.exceptions import InvalidReservationError
@@ -204,5 +203,5 @@ class ConversationSession:
 
     def clear_history(self) -> None:
         """Clear all messages from the conversation history."""
-        self.message_history = bytes()
+        self.message_history = b""
         self.updated_at = datetime.now()

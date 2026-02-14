@@ -98,7 +98,7 @@ class _InterceptHandler(logging.Handler):
         # Find caller from where the logged message originated
         frame, depth = logging.currentframe(), 2
         while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
+            frame = frame.f_back  # type: ignore[assignment]
             depth += 1
 
         logger.opt(depth=depth, exception=record.exc_info).log(

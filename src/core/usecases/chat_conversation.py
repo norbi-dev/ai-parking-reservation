@@ -110,7 +110,7 @@ class ChatConversationService:
             raise ValueError(msg)
 
         # Deserialize message history for Pydantic AI
-        from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
 
         message_history: list[ModelMessage] = []
         if session.message_history:

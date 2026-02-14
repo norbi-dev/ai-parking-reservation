@@ -435,7 +435,7 @@ def _get_chatbot_response(user_message: str) -> str:
         )
 
         logger.debug("Streamlit ← Backend: response length={}", len(response))
-        return response
+        return str(response)
     except Exception as e:
         logger.exception("Streamlit: chatbot error: {}", e)
         return f"Sorry, I encountered an error: {e}"

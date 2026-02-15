@@ -6,6 +6,10 @@ LLM-powered parking reservation assistant. Supports:
 - Inline Streamlit widgets for structured agent responses
   (availability tables, reservation cards, approve/reject buttons)
 - Plain markdown fallback for conversational text
+
+All backend communication goes through the REST API via
+``ParkingAPIClient`` — the frontend has zero direct dependency
+on the backend's Python internals.
 """
 
 from __future__ import annotations
@@ -16,10 +20,8 @@ from uuid import UUID
 import streamlit as st
 from loguru import logger
 
+from src.adapters.incoming.streamlit_app.api_client import ParkingAPIClient
 from src.adapters.incoming.streamlit_app.chat_widgets import parse_widget_response
-from src.config import dependencies
-from src.core.domain.exceptions import DomainError
-from src.core.domain.models import UserRole
 
 # ── Quick-action definitions per role ──────────────────────────────
 
@@ -177,30 +179,36 @@ def _render_reservation_card(
                 st.rerun()
 
 
+def _get_api_client() -> ParkingAPIClient:
+    """Get the API client from Streamlit session state."""
+    return st.session_state.api_client
+
+
 def _handle_admin_action(reservation_id: str, action: str, admin_notes: str) -> None:
-    """Execute an admin approve/reject directly and inject result into chat."""
+    """Execute an admin approve/reject via REST API and inject result into chat."""
     logger.debug(
         "Streamlit admin action: {} reservation={}",
         action,
         reservation_id,
     )
-    usecase = dependencies.get_admin_approval_usecase()
+    api = _get_api_client()
+    loop = st.session_state.event_loop
     try:
         res_uuid = UUID(reservation_id)
         if action == "approve":
-            usecase.approve_reservation(res_uuid, admin_notes)
-            logger.debug("Streamlit: reservation {} approved", reservation_id)
+            loop.run_until_complete(api.approve_reservation(res_uuid, admin_notes))
+            logger.debug("Streamlit: reservation {} approved via API", reservation_id)
             st.session_state.pending_prompt = (
                 f"I just approved reservation {reservation_id}"
             )
         else:
-            usecase.reject_reservation(res_uuid, admin_notes)
-            logger.debug("Streamlit: reservation {} rejected", reservation_id)
+            loop.run_until_complete(api.reject_reservation(res_uuid, admin_notes))
+            logger.debug("Streamlit: reservation {} rejected via API", reservation_id)
             st.session_state.pending_prompt = (
                 f"I just rejected reservation {reservation_id}"
             )
         st.rerun()
-    except DomainError as e:
+    except Exception as e:
         logger.error("Streamlit admin action failed: {}", e)
         st.error(str(e))
 
@@ -255,11 +263,12 @@ def _render_all_spaces_widget(data: dict[str, Any]) -> None:
                     f"{_render_space_type_badge(space['space_type'])}"
                 )
             with c3:
-                status = (
+                avail_status = (
                     "Available" if space.get("is_available", True) else "Unavailable"
                 )
                 st.markdown(
-                    f"{'🟢' if space.get('is_available', True) else '🔴'} {status}"
+                    f"{'🟢' if space.get('is_available', True) else '🔴'} "
+                    f"{avail_status}"
                 )
 
 
@@ -341,7 +350,7 @@ def render_chat() -> None:
 
     This function implements a continuous conversation loop where users can
     send multiple messages in succession. The conversation history is maintained
-    using Pydantic AI's native message memory system.
+    on the backend via the REST API; the frontend only tracks session_id.
     """
     # Show welcome if no messages yet
     if not st.session_state.messages:
@@ -384,11 +393,10 @@ def _process_user_message(prompt: str) -> None:
 
 
 def _get_chatbot_response(user_message: str) -> str:
-    """Send a message to the chatbot and get a response.
+    """Send a message to the chatbot via the REST API.
 
-    Uses the backend ChatConversationService to manage conversation state.
-    The backend maintains the full conversation history using Pydantic AI's
-    native message memory, ensuring proper separation of concerns.
+    Uses the backend session-based chat endpoint. The backend maintains
+    the full conversation history; the frontend only tracks session_id.
 
     Args:
         user_message: The user's message text
@@ -396,46 +404,43 @@ def _get_chatbot_response(user_message: str) -> str:
     Returns:
         The chatbot's response text (may contain widget JSON)
     """
-    from uuid import UUID
-
     user_id = UUID(st.session_state.user_id)
-    user_role = UserRole(st.session_state.user_role)
+    user_role = st.session_state.user_role
 
-    # Get or create session on backend
-    chat_service = dependencies.get_chat_conversation_service()
-    chat_deps = dependencies.get_chat_deps(user_id, user_role)
-
-    # Get session_id from session state or create new session
-    if (
-        "backend_session_id" not in st.session_state
-        or st.session_state.backend_session_id is None
-    ):
-        logger.debug(
-            "Streamlit: creating new backend session for user={}, role={}",
-            user_id,
-            user_role.value,
-        )
-        session = chat_service.get_or_create_session(None, user_id, user_role)
-        st.session_state.backend_session_id = str(session.session_id)
-        logger.info("Streamlit: new backend session_id={}", session.session_id)
-
-    session_id = UUID(st.session_state.backend_session_id)
+    # Get session_id from session state (may be None for first message)
+    session_id: UUID | None = None
+    if st.session_state.backend_session_id is not None:
+        session_id = UUID(st.session_state.backend_session_id)
 
     logger.debug(
-        "Streamlit → Backend: session={}, user={}, message='{}'",
+        "Streamlit → API: session={}, user={}, message='{}'",
         session_id,
         user_id,
         user_message[:100],
     )
 
+    api = _get_api_client()
+    loop = st.session_state.event_loop
+
     try:
-        loop = st.session_state.event_loop
-        response, _ = loop.run_until_complete(
-            chat_service.send_message(session_id, user_message, chat_deps)
+        result = loop.run_until_complete(
+            api.chat(
+                message=user_message,
+                user_id=user_id,
+                user_role=user_role,
+                session_id=session_id,
+            )
         )
 
-        logger.debug("Streamlit ← Backend: response length={}", len(response))
+        # Store the session_id returned by the backend
+        new_session_id = result.get("session_id")
+        if new_session_id:
+            st.session_state.backend_session_id = new_session_id
+            logger.debug("Streamlit: backend session_id={}", new_session_id)
+
+        response = result.get("response", "")
+        logger.debug("Streamlit ← API: response length={}", len(response))
         return str(response)
     except Exception as e:
-        logger.exception("Streamlit: chatbot error: {}", e)
-        return f"Sorry, I encountered an error: {e}"
+        logger.exception("Streamlit: API chat error: {}", e)
+        return f"Sorry, I encountered an error communicating with the server: {e}"

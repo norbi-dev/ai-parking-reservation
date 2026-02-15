@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     Attributes:
         log_level: Loguru console log level (DEBUG, INFO, WARNING, ERROR)
+        log_file: Path to the rotating log file
+        log_rotation: Max size before rotating (e.g. "100 MB", "1 GB")
+        log_retention: How many old log files to keep (e.g. "5", "30 days")
         local_mode: Use Ollama (true) or OpenRouter (false)
         openrouter_api_key: API key for OpenRouter
         model_name: Model name for remote mode
@@ -23,6 +26,9 @@ class Settings(BaseSettings):
     """
 
     log_level: str = "DEBUG"
+    log_file: str = "logs/app.log"
+    log_rotation: str = "100 MB"
+    log_retention: str = "5"
     local_mode: bool = True
     openrouter_api_key: str = ""
     model_name: str = "google/gemini-flash-1.5"
@@ -37,5 +43,6 @@ class Settings(BaseSettings):
     admin_approval_required: bool = True
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    api_base_url: str = "http://localhost:8000/api/v1"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

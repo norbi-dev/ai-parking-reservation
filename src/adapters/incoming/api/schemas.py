@@ -5,28 +5,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# ── Shared schemas ────────────────────────────────────────────────
+
 
 class TimeSlotRequest(BaseModel):
     """Request model for a time slot."""
 
     start_time: datetime = Field(description="Start of the reservation period")
     end_time: datetime = Field(description="End of the reservation period")
-
-
-class CreateReservationRequest(BaseModel):
-    """Request model for creating a reservation."""
-
-    user_id: UUID = Field(description="User making the reservation")
-    space_id: str = Field(description="Parking space identifier")
-    time_slot: TimeSlotRequest = Field(description="Requested time period")
-
-
-class AdminActionRequest(BaseModel):
-    """Request model for admin approval/rejection."""
-
-    admin_notes: str = Field(
-        default="", description="Optional notes from the administrator"
-    )
 
 
 class ReservationResponse(BaseModel):
@@ -57,6 +43,71 @@ class ParkingSpaceResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Client schemas ────────────────────────────────────────────────
+
+
+class CreateReservationRequest(BaseModel):
+    """Request model for creating a reservation."""
+
+    user_id: UUID = Field(description="User making the reservation")
+    space_id: str = Field(description="Parking space identifier")
+    time_slot: TimeSlotRequest = Field(description="Requested time period")
+
+
+class AvailabilityRequest(BaseModel):
+    """Request model for checking availability."""
+
+    time_slot: TimeSlotRequest = Field(description="Time period to check")
+
+
+class ChatRequest(BaseModel):
+    """Request model for the session-based chat endpoint.
+
+    Uses backend-managed conversation sessions. The server maintains
+    full conversation history; the client only tracks the session_id.
+    """
+
+    message: str = Field(description="User's message to the chatbot")
+    user_id: UUID = Field(description="User making the request")
+    user_role: str = Field(
+        default="client",
+        description="User role: 'client' or 'admin'",
+    )
+    session_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Backend conversation session ID. Omit or null to create a new session."
+        ),
+    )
+
+
+class ChatResponse(BaseModel):
+    """Response model for the chat endpoint."""
+
+    response: str = Field(description="Chatbot's response message")
+    session_id: UUID = Field(description="Backend conversation session ID")
+    user_id: UUID = Field(description="User who made the request")
+
+
+class ChatSessionResponse(BaseModel):
+    """Response model for session management."""
+
+    session_id: UUID = Field(description="Backend conversation session ID")
+    user_id: UUID = Field(description="Owner of the session")
+    created_at: datetime = Field(description="When the session was created")
+
+
+# ── Admin schemas ─────────────────────────────────────────────────
+
+
+class AdminActionRequest(BaseModel):
+    """Request model for admin approval/rejection."""
+
+    admin_notes: str = Field(
+        default="", description="Optional notes from the administrator"
+    )
+
+
 class ParkingSpaceRequest(BaseModel):
     """Request model for creating/updating a parking space."""
 
@@ -67,38 +118,3 @@ class ParkingSpaceRequest(BaseModel):
     )
     hourly_rate: float = Field(default=5.0, description="Cost per hour")
     space_type: str = Field(default="standard", description="Type of parking space")
-
-
-class AvailabilityRequest(BaseModel):
-    """Request model for checking availability."""
-
-    time_slot: TimeSlotRequest = Field(description="Time period to check")
-
-
-class ChatMessage(BaseModel):
-    """A single message in a chat conversation."""
-
-    role: str = Field(description="Message role: 'user' or 'assistant'")
-    content: str = Field(description="Message content")
-
-
-class ChatRequest(BaseModel):
-    """Request model for the chat endpoint."""
-
-    message: str = Field(description="User's message to the chatbot")
-    user_id: UUID = Field(description="User making the request")
-    user_role: str = Field(
-        default="client",
-        description="User role: 'client' or 'admin'",
-    )
-    conversation_history: list[ChatMessage] = Field(
-        default_factory=list,
-        description="Previous messages in the conversation for context",
-    )
-
-
-class ChatResponse(BaseModel):
-    """Response model for the chat endpoint."""
-
-    response: str = Field(description="Chatbot's response message")
-    user_id: UUID = Field(description="User who made the request")

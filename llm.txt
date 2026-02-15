@@ -50,6 +50,7 @@ podman-compose up -d                      # All services (postgres, api, streaml
 - **Conversation state managed on backend** — Frontend NEVER stores conversation history
 - Use `ChatConversationService` for all chat interactions — it manages Pydantic AI message history
 - Frontend only stores `backend_session_id` reference — ALL memory on backend
+- **Frontend communicates via REST API only** — use `ParkingAPIClient`, never import `dependencies` in frontend
 
 ### NEVER
 - Import from `adapters/` or `config/` inside `src/core/`
@@ -61,6 +62,7 @@ podman-compose up -d                      # All services (postgres, api, streaml
 - Skip the `from e` in `raise HTTPException(...) from e`
 - **Store conversation history in frontend** — this violates separation of concerns
 - Manually convert Streamlit messages to Pydantic AI `ModelMessage` — use backend service
+- **Import `src.config.dependencies` from frontend** — frontend must use REST API client (`ParkingAPIClient`)
 
 ## Architecture
 
@@ -86,20 +88,27 @@ src/
 │       └── chat_conversation.py    # NEW: Backend conversation memory management
 ├── adapters/
 │   ├── incoming/
-│   │   ├── api/                    # FastAPI (routes.py, schemas.py)
-│   │   └── streamlit_app/          # Streamlit (app.py, chat_page.py)
-│   │                               # Frontend: STATELESS - only stores backend_session_id
+│   │   ├── api/                    # FastAPI REST API
+│   │   │   ├── routes.py           # Router aggregator (mounts client + admin)
+│   │   │   ├── client_routes.py    # Client endpoints (/api/v1/client/...)
+│   │   │   ├── admin_routes.py     # Admin endpoints (/api/v1/admin/...)
+│   │   │   └── schemas.py          # Pydantic request/response models
+│   │   └── streamlit_app/          # Streamlit (communicates via REST API only)
+│   │       ├── app.py              # Main entry, session state init
+│   │       ├── chat_page.py        # Chat UI (uses ParkingAPIClient)
+│   │       ├── chat_widgets.py     # Widget dataclasses + JSON parsing
+│   │       └── api_client.py       # Async httpx client for REST API
 │   └── outgoing/
 │       ├── llm/chatbot.py          # Pydantic AI agent + 10 tools
 │       └── persistence/            # In-memory + PostgreSQL repos, SQLModel models
 │           ├── in_memory.py        # InMemoryConversationSessionRepository (NEW)
 │           └── postgres.py         # PostgreSQL repositories
 └── config/
-    ├── settings.py                 # Pydantic Settings (all env vars + LOG_LEVEL, LOG_FILE)
+    ├── settings.py                 # Pydantic Settings (all env vars incl. LOG_LEVEL/FILE/ROTATION/RETENTION)
     ├── dependencies.py             # DI factory functions (@lru_cache)
     │                               # - get_conversation_session_repository() (NEW)
     │                               # - get_chat_conversation_service() (NEW)
-    └── logging.py                  # NEW: Centralized loguru configuration
+    └── logging.py                  # Centralized loguru config (reads from Settings)
 ```
 
 **Dependency flow**: adapters → ports → core (never reversed)
@@ -124,11 +133,14 @@ src/
 | All DI wiring + persistence switching | `src/config/dependencies.py` |
 | Centralized logging setup (loguru) | `src/config/logging.py` |
 | LLM agent creation + all 10 tools | `src/adapters/outgoing/llm/chatbot.py` |
-| REST API (13 endpoints + 1 chat) | `src/adapters/incoming/api/routes.py` |
+| REST API route aggregator | `src/adapters/incoming/api/routes.py` |
+| Client REST endpoints (reservations, chat) | `src/adapters/incoming/api/client_routes.py` |
+| Admin REST endpoints (approval, spaces) | `src/adapters/incoming/api/admin_routes.py` |
 | Domain→DB model conversion | `src/adapters/outgoing/persistence/postgres.py` |
 | DB engine + table creation | `src/adapters/outgoing/persistence/database.py` |
-| Streamlit session state + event loop | `src/adapters/incoming/streamlit_app/app.py` |
-| **Backend conversation service integration** | `src/adapters/incoming/streamlit_app/chat_page.py` |
+| Streamlit session state + event loop + API client | `src/adapters/incoming/streamlit_app/app.py` |
+| **Frontend REST API communication (httpx)** | `src/adapters/incoming/streamlit_app/api_client.py` |
+| **Chat UI (pure presentation, uses REST API)** | `src/adapters/incoming/streamlit_app/chat_page.py` |
 
 ### Entry points
 | What | File |
@@ -202,23 +214,35 @@ DomainError (base)
 
 ## REST API (`/api/v1/`)
 
+Routes are split into **client** (`/api/v1/client/`) and **admin** (`/api/v1/admin/`) prefixes.
+
+### Client Endpoints (`/api/v1/client/`)
+
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
-| POST | `/reservations` | 201 | Create reservation |
-| GET | `/reservations/{id}` | 200 | Get by ID |
-| GET | `/reservations/user/{user_id}` | 200 | Get user's reservations |
-| POST | `/reservations/{id}/cancel` | 200 | Cancel reservation |
-| POST | `/availability` | 200 | Check available spaces for time slot |
+| POST | `/client/reservations` | 201 | Create reservation |
+| GET | `/client/reservations/{id}` | 200 | Get by ID |
+| GET | `/client/reservations/user/{user_id}` | 200 | Get user's reservations |
+| POST | `/client/reservations/{id}/cancel` | 200 | Cancel reservation |
+| POST | `/client/availability` | 200 | Check available spaces for time slot |
+| GET | `/client/spaces` | 200 | List all spaces (read-only) |
+| POST | `/client/chat` | 200 | Chat with LLM agent (session-based) |
+| POST | `/client/chat/sessions` | 201 | Create chat session explicitly |
+| DELETE | `/client/chat/sessions/{id}` | 204 | Delete chat session |
+
+### Admin Endpoints (`/api/v1/admin/`)
+
+| Method | Path | Status | Description |
+|--------|------|--------|-------------|
 | GET | `/admin/reservations/pending` | 200 | List pending reservations |
 | POST | `/admin/reservations/{id}/approve` | 200 | Approve reservation |
 | POST | `/admin/reservations/{id}/reject` | 200 | Reject reservation |
-| GET | `/admin/spaces` | 200 | List all spaces |
+| GET | `/admin/spaces` | 200 | List all spaces (admin) |
 | POST | `/admin/spaces` | 201 | Add space |
 | PUT | `/admin/spaces/{id}` | 200 | Update space |
 | DELETE | `/admin/spaces/{id}` | 204 | Remove space |
-| POST | `/chat` | 200 | Chat with LLM agent |
 
-**Schemas** (`schemas.py`): `TimeSlotRequest`, `CreateReservationRequest`, `AdminActionRequest`, `AvailabilityRequest`, `ParkingSpaceRequest`, `ChatMessage`, `ChatRequest` | `ReservationResponse`, `ParkingSpaceResponse`, `ChatResponse`
+**Schemas** (`schemas.py`): `TimeSlotRequest`, `CreateReservationRequest`, `AvailabilityRequest`, `ChatRequest` (session-based), `ChatSessionResponse` | `ReservationResponse`, `ParkingSpaceResponse`, `ChatResponse` | Admin: `AdminActionRequest`, `ParkingSpaceRequest`
 
 ## LLM Chatbot & Conversation Memory
 
@@ -240,14 +264,15 @@ DomainError (base)
   - `clear_session_history(session_id)` — reset conversation
   - `delete_session(session_id)` — remove session
 - **Storage**: `ConversationSession` domain model → `ConversationSessionRepository` → `InMemoryConversationSessionRepository` (in-memory for now, PostgreSQL TODO)
-- **Message Flow**:
-  1. Frontend sends message with `backend_session_id`
-  2. Backend retrieves session from repository
-  3. Deserializes Pydantic AI message history
-  4. Runs agent with full conversation context
-  5. Serializes and saves updated history
-  6. Returns response to frontend
-- **Separation of Concerns**: Frontend NEVER manages conversation state — all history on backend
+- **Message Flow** (via REST API):
+  1. Frontend sends message with `session_id` to `POST /api/v1/client/chat`
+  2. API route calls `ChatConversationService.get_or_create_session()`
+  3. Backend retrieves session from repository
+  4. Deserializes Pydantic AI message history
+  5. Runs agent with full conversation context
+  6. Serializes and saves updated history
+  7. Returns response + `session_id` to frontend via HTTP
+- **Frontend-Backend Separation**: Streamlit (or any frontend) communicates ONLY via REST API (`ParkingAPIClient`), never imports backend dependencies directly
 
 ## Persistence
 
@@ -290,6 +315,10 @@ get_chat_deps(user_id, user_role)     # → ChatDeps (not cached — per-request
 
 ```python
 # src/config/settings.py — all from env vars, .env file supported
+log_level: str = "DEBUG"                       # Console log level
+log_file: str = "logs/app.log"                 # Rotating log file path
+log_rotation: str = "100 MB"                   # Max size before rotation
+log_retention: str = "5"                       # Old rotated files to keep
 local_mode: bool = True                    # True=Ollama, False=OpenRouter
 ollama_model: str = "gpt-oss:20b"
 ollama_base_url: str = "http://localhost:11434/v1"  # MUST include /v1 suffix!
@@ -300,6 +329,7 @@ max_reservation_days: int = 30             # NOT enforced yet
 admin_approval_required: bool = True       # NOT enforced yet (always on)
 api_host: str = "0.0.0.0"
 api_port: int = 8000
+api_base_url: str = "http://localhost:8000/api/v1"  # Used by frontend API client
 ```
 
 ## Docker Services
@@ -338,12 +368,12 @@ api_port: int = 8000
 
 **New chatbot tool**: `@agent.tool` in `chatbot.py` inside `create_parking_agent()` → first arg is `RunContext[ChatDeps]` → admin tools guard on `ctx.deps.user_role`
 
-**New API endpoint**: Schema in `schemas.py` → Route in `routes.py` with tags + status codes → DomainError catch → `dependencies.get_*_usecase()`
+**New API endpoint**: Schema in `schemas.py` → Route in `client_routes.py` or `admin_routes.py` → DomainError catch → `dependencies.get_*_usecase()` → Add client method to `api_client.py` if frontend needs it
 
 ## Gotchas & Known Limitations
 
 - **OLLAMA_BASE_URL must end with `/v1`** — pydantic-ai requires OpenAI-compatible endpoint format
-- **Streamlit async**: uses `asyncio.new_event_loop()` stored in `st.session_state.event_loop` to run async pydantic-ai agent
+- **Streamlit async**: uses `asyncio.new_event_loop()` stored in `st.session_state.event_loop` to run async httpx API calls
 - **`_get_db_session()` is `@lru_cache`** — returns a single session, not thread-safe for concurrent requests
 - **`Reservation.__new__()` hack** in `postgres.py` — bypasses `__init__` to reconstruct domain objects from DB without triggering TimeSlot validation twice
 - **`max_reservation_days` / `admin_approval_required` settings exist but are NOT enforced** in any use case
@@ -362,6 +392,8 @@ These are stale references or removed items — do NOT import or recreate:
 |------|--------|-------|
 | `src/adapters/incoming/streamlit_app/client_page.py` | **Deleted** | Was a 6-line stub, never imported. Removed. |
 | `ErrorResponse` in `schemas.py` | **Removed** | Was defined but never used by any endpoint. |
+| `ChatMessage` in `schemas.py` | **Removed** | Was used by old client-managed chat history. Replaced by session-based `ChatRequest`. |
+| Old flat `/chat` endpoint | **Replaced** | Was at `/api/v1/chat` with `conversation_history`. Now session-based at `/api/v1/client/chat`. |
 | `get_session()` in `database.py` | **Removed** | Dead code. DI uses `_get_db_session()` in `dependencies.py`. |
 | `docs/` directory | **Never existed** | Referenced in `AGENTS.md` but never created. |
 | `.opencode/skills/fix-pre-commit/` | **Replaced** | Renamed to `fix-lint`. Use `skill({ name: "fix-lint" })` instead. |

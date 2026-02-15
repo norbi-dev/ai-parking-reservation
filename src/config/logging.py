@@ -1,21 +1,32 @@
 """Loguru logging configuration for the parking reservation system.
 
 Configures loguru with:
-- Console output at DEBUG level with coloured formatting
-- File output with rotation for persistent logs
+- Console output with coloured formatting (level from Settings)
+- File output with configurable rotation and retention
 - Intercept of stdlib logging so third-party libraries (uvicorn, sqlalchemy)
   are routed through loguru as well
+
+All logging settings are centralized in ``Settings`` (pydantic-settings),
+which reads from env vars / ``.env`` automatically. Explicit kwargs to
+``setup_logging()`` override Settings values.
 """
 
 import logging
-import os
 import sys
 from pathlib import Path
 
 from loguru import logger
 
+from src.config.settings import Settings
 
-def setup_logging(*, log_level: str | None = None, log_file: str | None = None) -> None:
+
+def setup_logging(
+    *,
+    log_level: str | None = None,
+    log_file: str | None = None,
+    log_rotation: str | None = None,
+    log_retention: str | None = None,
+) -> None:
     """Configure loguru for the application.
 
     Removes the default loguru sink and adds:
@@ -25,37 +36,48 @@ def setup_logging(*, log_level: str | None = None, log_file: str | None = None) 
     Also installs an intercept handler so that stdlib ``logging`` calls
     (e.g. from uvicorn, sqlalchemy) are forwarded to loguru.
 
-    The console log level is resolved in this order:
-    1. Explicit *log_level* argument
-    2. ``LOG_LEVEL`` environment variable
-    3. Falls back to ``"DEBUG"``
-
-    The log file path is resolved in this order:
-    1. Explicit *log_file* argument
-    2. ``LOG_FILE`` environment variable
-    3. Falls back to ``"logs/app.log"``
+    Resolution order for each parameter (first non-None wins):
+    1. Explicit kwarg
+    2. ``Settings`` value (sourced from env var / ``.env``)
 
     Args:
-        log_level: Minimum level for console output (default from env or DEBUG)
-        log_file: Path for the rotating log file (default from env or logs/app.log)
+        log_level: Minimum level for console output.
+        log_file: Path for the rotating log file.
+        log_rotation: Max file size before rotation (e.g. "100 MB").
+        log_retention: Number of old log files to keep (e.g. "5").
     """
-    if log_level is None:
-        log_level = os.environ.get("LOG_LEVEL", "DEBUG").upper()
+    settings = Settings()
 
-    if log_file is None:
-        log_file = os.environ.get("LOG_FILE", "logs/app.log")
+    resolved_level = (log_level or settings.log_level).upper()
+    resolved_file = log_file or settings.log_file
+    resolved_rotation = log_rotation or settings.log_rotation
+    resolved_retention_raw = log_retention or settings.log_retention
+    # Loguru accepts int (file count) or a duration string ("30 days").
+    # Env vars arrive as strings, so convert pure-digit values to int.
+    resolved_retention: int | str = (
+        int(resolved_retention_raw)
+        if resolved_retention_raw.isdigit()
+        else resolved_retention_raw
+    )
 
     # Create logs directory if it doesn't exist
-    log_path = Path(log_file)
+    log_path = Path(resolved_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Remove default loguru handler
     logger.remove()
 
+    # Filter out noisy file-watcher messages that cause a feedback loop:
+    # Streamlit's inotify watcher detects writes to the log file, generating
+    # a log entry, which writes to the file again, ad infinitum.
+    def _drop_file_watcher_noise(record: dict) -> bool:  # type: ignore[type-arg]
+        msg = record["message"]
+        return "InotifyEvent" not in msg and "in-event" not in msg
+
     # Console sink
     logger.add(
         sys.stderr,
-        level=log_level,
+        level=resolved_level,
         format=(
             "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
             "<level>{level: <8}</level> | "
@@ -63,12 +85,12 @@ def setup_logging(*, log_level: str | None = None, log_file: str | None = None) 
             "<level>{message}</level>"
         ),
         colorize=True,
+        filter=_drop_file_watcher_noise,
     )
 
     # File sink with rotation
-    # Keep max 5 files per service (retention="5")
     logger.add(
-        log_file,
+        resolved_file,
         level="DEBUG",
         format=(
             "{time:YYYY-MM-DD HH:mm:ss} | "
@@ -76,9 +98,10 @@ def setup_logging(*, log_level: str | None = None, log_file: str | None = None) 
             "{name}:{function}:{line} | "
             "{message}"
         ),
-        rotation="10 MB",
-        retention=5,  # Keep max 5 files
+        rotation=resolved_rotation,
+        retention=resolved_retention,
         compression="zip",
+        filter=_drop_file_watcher_noise,
     )
 
     # Intercept stdlib logging → loguru

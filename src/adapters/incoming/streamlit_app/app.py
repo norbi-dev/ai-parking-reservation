@@ -4,6 +4,10 @@ This is the main entry point for the Streamlit application. It provides
 a fully chat-driven interface where users interact with an AI assistant
 to manage parking reservations. Both client and admin operations are
 handled through the chat with inline interactive widgets.
+
+All backend communication goes through the REST API — the frontend
+is language-independent and has no direct dependency on Python backend
+internals.
 """
 
 import asyncio
@@ -12,6 +16,7 @@ from uuid import uuid4
 import streamlit as st
 from loguru import logger
 
+from src.adapters.incoming.streamlit_app.api_client import create_api_client
 from src.adapters.incoming.streamlit_app.chat_page import render_chat
 
 
@@ -32,6 +37,9 @@ def _init_session_state() -> None:
         st.session_state.event_loop = asyncio.new_event_loop()
     if "pending_prompt" not in st.session_state:
         st.session_state.pending_prompt = None
+    if "api_client" not in st.session_state:
+        st.session_state.api_client = create_api_client()
+        logger.debug("Streamlit: API client initialized")
 
 
 def _render_sidebar() -> None:

@@ -1,5 +1,33 @@
 services:
   # ---------------------------------------------------------------------------
+  # Ollama LLM service
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: parking-reservation-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      # Use project-local models directory (won't interfere with system Ollama)
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - parking-net
+    # Uncomment for GPU support with Docker (not supported in Podman yet)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------------
   # PostgreSQL + pgvector database
   # ---------------------------------------------------------------------------
   postgres:
@@ -35,6 +63,8 @@ services:
     environment:
       LOG_LEVEL: "INFO"
       LOG_FILE: "logs/api/api.log"
+      LOG_ROTATION: "100 MB"
+      LOG_RETENTION: "5"
       DATABASE_URL: postgresql://parkinguser:parkingpass@postgres:5432/parkingreservation
       USE_POSTGRES: "true"
       API_HOST: "0.0.0.0"
@@ -43,13 +73,13 @@ services:
       MAX_RESERVATION_DAYS: "30"
       LOCAL_MODE: "true"
       OLLAMA_MODEL: "gpt-oss:20b"
-      OLLAMA_BASE_URL: "http://host.containers.internal:11434/v1"
+      OLLAMA_BASE_URL: "http://ollama:11434/v1"
     volumes:
       - ./logs:/app/logs
-    extra_hosts:
-      - "host.containers.internal:host-gateway"
     depends_on:
       postgres:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/admin/spaces')"]
@@ -73,19 +103,22 @@ services:
     environment:
       LOG_LEVEL: "INFO"
       LOG_FILE: "logs/streamlit/streamlit.log"
+      LOG_ROTATION: "100 MB"
+      LOG_RETENTION: "5"
+      API_BASE_URL: "http://api:8000/api/v1"
       DATABASE_URL: postgresql://parkinguser:parkingpass@postgres:5432/parkingreservation
       USE_POSTGRES: "true"
       ADMIN_APPROVAL_REQUIRED: "true"
       MAX_RESERVATION_DAYS: "30"
       LOCAL_MODE: "true"
       OLLAMA_MODEL: "gpt-oss:20b"
-      OLLAMA_BASE_URL: "http://host.containers.internal:11434/v1"
+      OLLAMA_BASE_URL: "http://ollama:11434/v1"
     volumes:
       - ./logs:/app/logs
-    extra_hosts:
-      - "host.containers.internal:host-gateway"
     depends_on:
       postgres:
+        condition: service_healthy
+      api:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
@@ -98,6 +131,7 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:
 
 networks:
   parking-net:

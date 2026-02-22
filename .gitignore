@@ -28,3 +28,7 @@ htmlcov/
 
 # Logs
 logs/
+
+# Models (Ollama models stored in Docker volume)
+models/*
+!models/.keep
